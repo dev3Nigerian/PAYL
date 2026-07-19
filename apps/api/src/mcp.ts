@@ -31,7 +31,7 @@ function createWalletServer(service: PaylService, consumerId: string): McpServer
   const server = new McpServer(
     { name: "payl-wallet-payment", version: "0.1.0" },
     {
-      instructions: "PAYL is a sandbox consumer wallet. Use payment.prepare only with the exact merchant-signed quote. Never alter signed fields or approve for the human. If approval is pending, show approvalUrl to the user, then poll payment.get_status. A mandate is single-use and must go only to its bound merchant.",
+      instructions: "PAYL is a sandbox consumer wallet. Use payment.prepare only with the exact merchant-signed quote. Never alter signed fields or approve for the human. If approval is pending, show approvalUrl to the user, then poll payment.get_status. A mandate is single-use and must go only to its bound merchant. Call payment.request_refund only after explicit consumer confirmation; eligible refunds return the full order amount while PAYL retains its fee from the merchant.",
     },
   );
 
@@ -99,6 +99,27 @@ function createWalletServer(service: PaylService, consumerId: string): McpServer
     async ({ paymentId }) => {
       try {
         return result(await service.paymentStatus(paymentId, consumerId));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "payment.request_refund",
+    {
+      title: "Refund an eligible order",
+      description: "Immediately refunds the full captured amount under the merchant policy. PAYL retains its original fee and charges it to the merchant.",
+      inputSchema: {
+        orderId: z.string().min(3).max(128),
+        idempotencyKey: z.string().min(8).max(128),
+        reason: z.string().min(1).max(500).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ orderId, idempotencyKey, reason }) => {
+      try {
+        return result(await service.refundOrder({ consumerId, orderId, idempotencyKey, reason }));
       } catch (error) {
         return toolFailure(error);
       }

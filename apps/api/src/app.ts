@@ -226,6 +226,20 @@ export function createApp(
     }
   });
 
+  app.post("/api/orders/:orderId/refund", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "consumer");
+      response.status(201).json(await service.refundOrder({
+        consumerId: requireConsumerId(session),
+        orderId: request.params.orderId ?? "",
+        idempotencyKey: request.body?.idempotencyKey,
+        reason: request.body?.reason,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/oauth/grants", async (request, response, next) => {
     try {
       const session = await requireWebSession(request, identity, "consumer");
@@ -264,6 +278,8 @@ export function createApp(
         description: request.body?.description,
         priceMinor: request.body?.priceMinor,
         fulfillmentMethod: request.body?.fulfillmentMethod,
+        refundable: request.body?.refundable,
+        refundWindowMinutes: request.body?.refundWindowMinutes,
       }));
     } catch (error) {
       next(error);
@@ -272,12 +288,13 @@ export function createApp(
   app.patch("/api/merchant/offers/:offerId", async (request, response, next) => {
     try {
       const session = await requireWebSession(request, identity, "merchant_admin");
-      if (typeof request.body?.active !== "boolean") throw new DomainError("INVALID_PRODUCT_STATUS", "Product active status must be true or false");
-      response.json(await service.setMerchantOfferActive(
-        requireMerchantId(session),
-        request.params.offerId ?? "",
-        request.body.active,
-      ));
+      response.json(await service.updateMerchantOffer({
+        merchantId: requireMerchantId(session),
+        offerId: request.params.offerId ?? "",
+        active: request.body?.active,
+        refundable: request.body?.refundable,
+        refundWindowMinutes: request.body?.refundWindowMinutes,
+      }));
     } catch (error) {
       next(error);
     }
@@ -302,6 +319,8 @@ export function createApp(
         description: request.body?.description,
         priceMinor: request.body?.priceMinor,
         fulfillmentMethod: request.body?.fulfillmentMethod,
+        refundable: request.body?.refundable,
+        refundWindowMinutes: request.body?.refundWindowMinutes,
       }));
     } catch (error) {
       next(error);
@@ -311,12 +330,13 @@ export function createApp(
     try {
       const session = await requireWebSession(request, identity, "merchant_admin");
       assertMerchant(session, request.params.merchantId ?? "");
-      if (typeof request.body?.active !== "boolean") throw new DomainError("INVALID_PRODUCT_STATUS", "Product active status must be true or false");
-      response.json(await service.setMerchantOfferActive(
-        requireMerchantId(session),
-        request.params.offerId ?? "",
-        request.body.active,
-      ));
+      response.json(await service.updateMerchantOffer({
+        merchantId: requireMerchantId(session),
+        offerId: request.params.offerId ?? "",
+        active: request.body?.active,
+        refundable: request.body?.refundable,
+        refundWindowMinutes: request.body?.refundWindowMinutes,
+      }));
     } catch (error) {
       next(error);
     }

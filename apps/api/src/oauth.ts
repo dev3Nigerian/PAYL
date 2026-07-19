@@ -26,6 +26,7 @@ import { DomainError, requireValue } from "./errors.js";
 export const MCP_SCOPES = [
   "wallet:read",
   "wallet:pay",
+  "wallet:refund",
   "commerce:read",
   "commerce:quote",
   "commerce:order",
@@ -353,6 +354,7 @@ export function toolScopeForRequest(request: Request, surface: "wallet" | "merch
   const tool = request.body?.method === "tools/call" ? request.body?.params?.name : undefined;
   if (surface === "wallet") {
     if (tool === "payment.prepare") return "wallet:pay";
+    if (tool === "payment.request_refund") return "wallet:refund";
     return "wallet:read";
   }
   if (tool === "commerce.create_quote") return "commerce:quote";

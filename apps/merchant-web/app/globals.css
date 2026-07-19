@@ -19,11 +19,12 @@ h2,h3 { letter-spacing:-.025em; }
 .status { background:#dff4d2; color:var(--green); border-radius:999px; padding:9px 13px; font-size:12px; font-weight:800; }
 .status.bad { background:#ffe1dc; color:#96281e; }
 .merchant-balance { display:grid; grid-template-columns:1.3fr 1fr; margin:38px 0 16px; overflow:hidden; border-radius:22px; background:var(--green); color:white; box-shadow:0 20px 60px rgba(11,107,66,.17); }
+.merchant-balance.liability { background:#7b392f; box-shadow:0 20px 60px rgba(123,57,47,.16); }
 .merchant-balance>div { padding:28px; }
 .merchant-balance>div+div { background:rgba(0,0,0,.13); }
 .merchant-balance span,.merchant-balance small { display:block; color:#cce3d6; }
 .merchant-balance strong { display:block; margin:10px 0 7px; font-size:44px; letter-spacing:-.05em; }
-.metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin:16px 0 24px; }
+.metrics { display:grid; grid-template-columns:repeat(5,1fr); gap:16px; margin:16px 0 24px; }
 .metrics article,.panel,.product-form,.product-card,.workflow-card,.settlement-hero { background:white; border:1px solid var(--line); border-radius:18px; }
 .metrics article { padding:22px; }
 .metrics span { display:block; color:var(--muted); font-size:13px; }
@@ -43,6 +44,7 @@ h2,h3 { letter-spacing:-.025em; }
 .row small { display:block; margin-top:5px; color:var(--muted); }
 .mono { display:block; max-width:100%; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; overflow:hidden; text-overflow:ellipsis; }
 .complete { color:var(--green); font-weight:800; text-transform:capitalize; }
+.complete.refunded { color:#9a3428; }
 .text-button { border:0; padding:4px; color:var(--green); background:transparent; font-weight:800; cursor:pointer; }
 .primary-button,.secondary-button { border:0; border-radius:12px; padding:13px 17px; font-weight:800; cursor:pointer; }
 .primary-button { color:#10200f; background:var(--lime); }
@@ -56,6 +58,9 @@ h2,h3 { letter-spacing:-.025em; }
 .product-form label { display:block; }
 .product-form label>span { display:block; margin-bottom:8px; font-size:13px; font-weight:800; }
 .product-form .wide { grid-column:1/-1; }
+.product-form .checkbox-field { display:flex; align-items:center; gap:10px; padding:12px 0; }
+.product-form .checkbox-field input { width:auto; margin:0; }
+.product-form .checkbox-field>span { margin:0; }
 .product-form input,.product-form textarea,.product-form select { width:100%; border:1px solid #cfd6cc; border-radius:11px; padding:12px; outline:none; background:white; }
 .product-form input:focus,.product-form textarea:focus,.product-form select:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(11,107,66,.1); }
 .product-form textarea { min-height:90px; resize:vertical; }
@@ -67,6 +72,11 @@ h2,h3 { letter-spacing:-.025em; }
 .form-notice { padding:12px 14px; border-radius:11px; font-size:13px; }
 .form-notice.ok { color:#075b37; background:#e4f5df; }
 .form-notice.error { color:#96281e; background:#ffe7e2; }
+.policy-editor { margin-top:18px; background:#fbfff6; }
+.policy-editor h3 { margin:0 0 5px; }
+.policy-editor small { color:var(--muted); }
+.form-actions,.product-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.product-actions .secondary-button { flex:1 1 130px; }
 .product-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
 .product-card { display:flex; flex-direction:column; min-width:0; padding:21px; }
 .product-card.inactive { opacity:.68; }
@@ -77,6 +87,8 @@ h2,h3 { letter-spacing:-.025em; }
 .product-card p { min-height:64px; margin:0 0 20px; color:var(--muted); line-height:1.55; font-size:13px; }
 .product-card small { display:block; margin:auto 0 16px; color:var(--muted); text-transform:capitalize; }
 .product-card .mono { margin-top:4px; text-transform:none; }
+.refund-policy { margin:0 0 16px; padding:9px 11px; border-radius:10px; color:var(--muted); background:#f0f1ed; font-size:12px; font-weight:800; }
+.refund-policy.refundable { color:var(--green); background:#edf7dc; }
 .orders-layout { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(300px,.65fr); gap:20px; }
 .workflow-card { align-self:start; padding:22px; }
 .workflow-card h2 { margin:0; }
@@ -86,6 +98,7 @@ h2,h3 { letter-spacing:-.025em; }
 .workflow-card li b { flex:0 0 28px; height:28px; display:grid; place-items:center; border-radius:9px; color:var(--green); background:#edf7dc; }
 .settlement-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:20px; }
 .settlement-hero { padding:30px; background:var(--green); color:white; }
+.settlement-hero.liability { background:#7b392f; }
 .settlement-hero span,.settlement-hero small { display:block; color:#cce3d6; }
 .settlement-hero strong { display:block; margin:14px 0 10px; font-size:48px; letter-spacing:-.05em; }
 .settlement-detail { padding:8px 22px; }

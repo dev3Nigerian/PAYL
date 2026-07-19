@@ -76,7 +76,7 @@ The consumer dashboard has working navigation for wallet balance, activity, AI p
 
 Policy updates are versioned and enforced by the wallet when `payment.prepare` is called. The auto-approve limit cannot exceed the transaction limit, and the transaction limit cannot exceed the daily limit.
 
-The merchant dashboard supports merchant self-registration at `http://localhost:3001/register` and multiple products under **Products**. Registration atomically provisions an isolated merchant identity, NGN payable account, product catalog, signing identity, and merchant-specific MCP endpoint. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, and can publish or hide it. Published products immediately appear in `commerce.search_offers` through that merchant's MCP server.
+The merchant dashboard supports merchant self-registration at `http://localhost:3001/register` and multiple products under **Products**. Registration atomically provisions an isolated merchant identity, NGN payable account, product catalog, signing identity, and merchant-specific MCP endpoint. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, can mark it refundable for 1 hour through 365 days, and can publish or hide it. Refund terms are signed into each quote, so later product changes do not alter an existing order. Published products immediately appear in `commerce.search_offers` through that merchant's MCP server.
 
 Merchants do not manually create a paid order. Orders are generated from authorized checkout so the merchant cannot accidentally record an unpaid sale:
 
@@ -87,6 +87,8 @@ Merchants do not manually create a paid order. Orders are generated from authori
 5. The AI sends the resulting single-use mandate and signed quote to `commerce.commit_order`.
 6. PAYL captures the reservation, creates the order, and returns a signed receipt.
 
+An eligible consumer can refund the order from **Activity** or through `payment.request_refund` on `payl_wallet`. PAYL returns the full captured amount to the consumer, debits the merchant by that gross amount, and retains the original PAYL fee. Refunds are full-order, immediate, signed, auditable, and idempotent. A merchant whose refundable order is returned can therefore show a negative payable balance equal to the retained fee.
+
 ## Connect PAYL to Codex or another MCP client
 
 This repository includes `.codex/config.toml` with two project-scoped Streamable HTTP connections that the consumer configures once:
@@ -95,6 +97,8 @@ This repository includes `.codex/config.toml` with two project-scoped Streamable
 - `payl_commerce` → `http://localhost:4100/mcp/commerce`
 
 After starting PAYL with `pnpm dev`, trust the repository and restart Codex or open a new Codex task. In Codex, use `/mcp` or **Settings → MCP servers** to connect. PAYL returns protected-resource metadata, Codex opens the consumer login and consent flow, and write-capable tools retain the `writes` approval mode.
+
+Refunds use the separate `wallet:refund` OAuth permission. Connections authorized before this scope was added must be revoked and reconnected before `payment.request_refund` can be called; dashboard refunds continue to use the signed-in consumer session.
 
 To configure another OAuth-capable MCP client, register the same two Streamable HTTP URLs. Clients discover PAYL's OAuth authorization server, dynamically register a client, use authorization code with PKCE, and receive audience-bound bearer tokens for `http://localhost:4100/mcp`. New merchants and products appear through `payl_commerce` automatically; the consumer does not add or authorize another MCP server.
 
@@ -117,9 +121,10 @@ consumer MCP client -> PAYL commerce MCP -> registered merchant -> signed quote
 consumer MCP client -> PAYL wallet MCP -> policy + approval
 PAYL -> signed single-use mandate -> merchant commerce MCP
 merchant -> atomic capture + fulfillment -> signed order receipt
+consumer -> policy-eligible full refund -> merchant gross debit + signed refund receipt
 ```
 
-The current implementation includes Streamable HTTP MCP endpoints, OAuth authorization code with PKCE, scoped and audience-bound access tokens, revocable client grants, password sessions, per-approval TOTP, tenant-isolated dashboards, strict shared schemas, Ed25519 JWS signatures, PostgreSQL transactions, a balanced double-entry sandbox ledger, quote-bound mandates, idempotent capture, audit events, and a reference MCP client.
+The current implementation includes Streamable HTTP MCP endpoints, OAuth authorization code with PKCE, scoped and audience-bound access tokens, revocable client grants, password sessions, per-approval TOTP, tenant-isolated dashboards, strict shared schemas, Ed25519 JWS signatures, PostgreSQL transactions, a balanced double-entry sandbox ledger, quote-bound mandates, idempotent capture and refunds, audit events, and a reference MCP client.
 
 The local identity provider, seeded passwords, TOTP secret, and deterministic signing keys are development fixtures. Replacing them with independently reviewed IAM, account recovery, protected key storage, and production MFA is mandatory before any hosted or live-funds pilot.
 

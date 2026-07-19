@@ -34,7 +34,7 @@ beforeEach(async () => {
     `TRUNCATE TABLE
        oauth_revoked_access_tokens, oauth_refresh_tokens, oauth_grants, oauth_authorization_codes,
        oauth_consent_requests, oauth_clients, auth_sessions, auth_users,
-       audit_events, orders, payment_mandates, approval_challenges, payment_intents, quotes,
+       audit_events, refunds, orders, payment_mandates, approval_challenges, payment_intents, quotes,
        journal_lines, journal_entries, ledger_accounts, spending_policies, offers, consumers, merchants
      RESTART IDENTITY CASCADE`,
   );
@@ -128,6 +128,44 @@ describe("PAYL identity and MCP authorization", () => {
     await request(app).post(`/api/approvals/${prepared.approvalId}/decision`).set("authorization", `Bearer ${token}`).send({ decision: "approve", mfaCode: totpCode(config.sandboxConsumerTotpSecret) }).expect(200);
   });
 
+  it("lets only the authenticated purchasing consumer use the refund REST endpoint", async () => {
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = $1", [config.sandboxConsumerId]);
+    const quote = await service.createQuote(config.sandboxMerchantId, "offer_research_pack", 1);
+    const prepared = await service.preparePayment({
+      consumerId: config.sandboxConsumerId,
+      agentClientId: "agent_refund_api",
+      signedQuote: quote,
+      idempotencyKey: "prepare-refund-api-001",
+    });
+    if (prepared.status !== "reserved") throw new Error("Expected refund API payment to reserve");
+    const order = await service.commitOrder({
+      merchantId: config.sandboxMerchantId,
+      signedQuote: quote,
+      mandate: prepared.mandate,
+      idempotencyKey: "commit-refund-api-001",
+    });
+    const consumerLogin = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail,
+      password: config.sandboxConsumerPassword,
+      role: "consumer",
+    }).expect(200);
+    const refund = await request(app).post(`/api/orders/${order.payload.orderId}/refund`)
+      .set("authorization", `Bearer ${consumerLogin.body.sessionToken as string}`)
+      .send({ idempotencyKey: "refund-api-001", reason: "Consumer API test" })
+      .expect(201);
+    expect(refund.body.payload).toMatchObject({ orderId: order.payload.orderId, status: "refunded", retainedFeeMinor: "15000" });
+
+    const merchantLogin = await request(app).post("/api/auth/login").send({
+      email: config.sandboxMerchantEmail,
+      password: config.sandboxMerchantPassword,
+      role: "merchant_admin",
+    }).expect(200);
+    await request(app).post(`/api/orders/${order.payload.orderId}/refund`)
+      .set("authorization", `Bearer ${merchantLogin.body.sessionToken as string}`)
+      .send({ idempotencyKey: "refund-api-merchant-001" })
+      .expect(403);
+  });
+
   it("completes PKCE authorization, calls a scoped MCP tool, and revokes the grant", async () => {
     const networkMerchant = await identity.registerMerchant({
       businessName: "Network Merchant Two",
@@ -193,6 +231,16 @@ describe("PAYL identity and MCP authorization", () => {
       .set("accept", "application/json, text/event-stream")
       .send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "wallet.get_summary", arguments: {} } })
       .expect(200);
+    await request(app).post("/mcp/wallet")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("accept", "application/json, text/event-stream")
+      .send({
+        jsonrpc: "2.0",
+        id: 11,
+        method: "tools/call",
+        params: { name: "payment.request_refund", arguments: { orderId: "order_missing", idempotencyKey: "refund-scope-test" } },
+      })
+      .expect(403);
 
     const directory = await request(app).post("/mcp/commerce")
       .set("authorization", `Bearer ${accessToken}`)

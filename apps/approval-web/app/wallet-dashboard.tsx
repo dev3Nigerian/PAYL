@@ -27,6 +27,10 @@ export type WalletState = {
     currency: string;
     merchant_name: string;
     offer_name?: string;
+    refundable: boolean;
+    refund_eligible_until: string | null;
+    refunded_at: string | null;
+    retained_fee_minor: string | null;
     created_at: string;
   }>;
   connections: Array<{
@@ -61,13 +65,28 @@ function minorUnits(value: string): string {
   return Math.round(amount * 100).toString();
 }
 
-function ActivityList({ state }: { state: WalletState | null }) {
+function refundLabel(order: WalletState["orders"][number]): string {
+  if (order.status === "refunded") return `Refunded${order.refunded_at ? ` ${new Date(order.refunded_at).toLocaleString("en-NG")}` : ""}`;
+  if (!order.refundable || !order.refund_eligible_until) return "Not refundable";
+  if (new Date(order.refund_eligible_until).getTime() < Date.now()) return "Refund window ended";
+  return `Refundable until ${new Date(order.refund_eligible_until).toLocaleString("en-NG")}`;
+}
+
+function ActivityList({
+  state,
+  onRefund,
+  refunding,
+}: {
+  state: WalletState | null;
+  onRefund: (order: WalletState["orders"][number]) => void;
+  refunding: string | null;
+}) {
   if (!state || state.orders.length === 0) return <p className="empty-state">No purchases yet. Connect an MCP client to create one.</p>;
   return <div className="activity-list">{state.orders.map((order) => (
     <div className="activity-row" key={order.id}>
-      <div className="activity-icon">AI</div>
-      <div><strong>{order.offer_name ?? order.merchant_name}</strong><span>{order.merchant_name} · {new Date(order.created_at).toLocaleString("en-NG")}</span></div>
-      <div className="activity-amount"><strong>-{money(order.captured_amount_minor, order.currency)}</strong><span>{order.status}</span></div>
+      <div className={order.status === "refunded" ? "activity-icon refunded" : "activity-icon"}>{order.status === "refunded" ? "RF" : "AI"}</div>
+      <div><strong>{order.offer_name ?? order.merchant_name}</strong><span>{order.merchant_name} · {new Date(order.created_at).toLocaleString("en-NG")}</span><small className="refund-detail">{refundLabel(order)}</small></div>
+      <div className="activity-amount"><strong>{order.status === "refunded" ? "+" : "-"}{money(order.captured_amount_minor, order.currency)}</strong><span>{order.status}</span>{order.status !== "refunded" && order.refundable && order.refund_eligible_until && new Date(order.refund_eligible_until).getTime() >= Date.now() && <button className="refund-button" type="button" disabled={refunding === order.id} onClick={() => onRefund(order)}>{refunding === order.id ? "Refunding…" : "Refund purchase"}</button>}</div>
     </div>
   ))}</div>;
 }
@@ -82,6 +101,7 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
     daily: initialState ? majorUnits(initialState.policy.dailyLimitMinor) : "0.00",
   }));
   const [saving, setSaving] = useState(false);
+  const [refunding, setRefunding] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
 
   async function savePolicy(event: FormEvent<HTMLFormElement>) {
@@ -127,6 +147,28 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
     setNotice({ kind: "ok", message: "AI client access was revoked immediately." });
   }
 
+  async function refundOrder(order: WalletState["orders"][number]) {
+    if (!window.confirm(`Refund ${money(order.captured_amount_minor, order.currency)} for ${order.offer_name ?? order.merchant_name}? This returns the full amount to your PAYL wallet.`)) return;
+    setRefunding(order.id);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/orders/${encodeURIComponent(order.id)}/refund`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey: `dashboard-${order.id}-${crypto.randomUUID()}`.slice(0, 128),
+          reason: "Consumer requested from the PAYL dashboard",
+        }),
+      });
+      const body = await response.json() as { error?: { message?: string } };
+      if (!response.ok) throw new Error(body.error?.message ?? "Refund could not be completed");
+      window.location.reload();
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Refund could not be completed" });
+      setRefunding(null);
+    }
+  }
+
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.assign("/login");
@@ -169,7 +211,7 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
           <section className="wallet-grid">
             <article className="dashboard-panel">
               <div className="panel-title"><div><p className="section-label">Recent activity</p><h2>Agent purchases</h2></div><button className="text-button" type="button" onClick={() => setTab("activity")}>View all</button></div>
-              <ActivityList state={initialState} />
+              <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} refunding={refunding} />
             </article>
             <aside className="dashboard-panel policy-panel">
               <p className="section-label">AI spending policy</p><h2>Bounded authority</h2>
@@ -183,7 +225,8 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
 
         {tab === "activity" && <article className="dashboard-panel section-panel">
           <div className="panel-title"><div><p className="section-label">Ledger activity</p><h2>Completed purchases</h2></div><span>{initialState?.orders.length ?? 0} total</span></div>
-          <ActivityList state={initialState} />
+          {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
+          <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} refunding={refunding} />
         </article>}
 
         {tab === "permissions" && <><section className="settings-grid section-panel">
