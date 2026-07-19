@@ -23,8 +23,10 @@ The repository implements the first complete consumer-to-merchant MCP transactio
 
 MCP endpoints:
 
-- `POST /mcp/wallet`, with a sandbox `x-payl-consumer-id` connection header.
+- `POST /mcp/wallet`, protected by consumer OAuth scopes.
 - `POST /mcp/merchants/:merchantId`.
+
+Both MCP surfaces use OAuth authorization code with PKCE, a shared audience-bound MCP resource, dynamic client registration, scoped access tokens, refresh-token rotation, and consumer-controlled grant revocation.
 
 ## Financial invariants
 
@@ -46,7 +48,8 @@ MCP endpoints:
 ## Explicit sandbox limitations
 
 - No custody, funding rail, payout rail, KYC/KYB, AML monitoring, disputes, or real settlement.
-- The approval PWA uses a development consumer header rather than OIDC/MFA.
+- Identity uses seeded local password accounts rather than an external production IAM provider.
+- Approval requires TOTP, but the sandbox TOTP seed is intentionally public for local testing.
 - Development signing keys are deterministic and not KMS-backed.
 - One seeded consumer, merchant, currency, and category are provided.
 - Cancellation, release, refund, payout, and reconciliation state machines remain the next implementation slice.

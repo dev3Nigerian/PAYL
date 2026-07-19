@@ -3,11 +3,12 @@ import { loadConfig } from "../src/config.js";
 import { createPool } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { PaylService } from "../src/service.js";
+import { IdentityService } from "../src/identity.js";
 
 const config = loadConfig({
   ...process.env,
   NODE_ENV: "test",
-  DATABASE_URL: process.env.DATABASE_URL ?? "postgresql://payl:payl_dev_only@localhost:54329/payl",
+  DATABASE_URL: process.env.PAYL_TEST_DATABASE_URL ?? "postgresql://payl:payl_test_only@localhost:54330/payl_test",
   APPROVAL_WEB_URL: "http://localhost:3000",
   PAYL_ISSUER: "https://sandbox.payl.local",
   PAYL_DEV_KEYS: "true",
@@ -16,6 +17,7 @@ const config = loadConfig({
 });
 const pool = createPool(config);
 const service = new PaylService(pool, config);
+const identity = new IdentityService(pool, config);
 
 beforeAll(async () => {
   await migrate(pool);
@@ -24,11 +26,14 @@ beforeAll(async () => {
 beforeEach(async () => {
   await pool.query(
     `TRUNCATE TABLE
+       oauth_revoked_access_tokens, oauth_refresh_tokens, oauth_grants, oauth_authorization_codes,
+       oauth_consent_requests, oauth_clients, auth_sessions, auth_users,
        audit_events, orders, payment_mandates, approval_challenges, payment_intents, quotes,
        journal_lines, journal_entries, ledger_accounts, spending_policies, offers, consumers, merchants
      RESTART IDENTITY CASCADE`,
   );
   await service.seedSandbox();
+  await identity.seedSandboxUsers();
 });
 
 afterAll(async () => {
@@ -111,5 +116,43 @@ describe("PAYL signed quote to receipt flow", () => {
         idempotencyKey: "prepare-tampered-001",
       }),
     ).rejects.toThrow("Signed payload does not match");
+  });
+
+  it("updates policy limits with optimistic version checks", async () => {
+    const updated = await service.updateWalletPolicy({
+      consumerId: "consumer_demo",
+      expectedVersion: 1,
+      autoApproveLimitMinor: "250000",
+      perTransactionLimitMinor: "3000000",
+      dailyLimitMinor: "8000000",
+    });
+    expect(updated).toMatchObject({
+      version: 2,
+      autoApproveLimitMinor: "250000",
+      perTransactionLimitMinor: "3000000",
+      dailyLimitMinor: "8000000",
+    });
+    await expect(service.updateWalletPolicy({
+      consumerId: "consumer_demo",
+      expectedVersion: 1,
+      autoApproveLimitMinor: "250000",
+      perTransactionLimitMinor: "3000000",
+      dailyLimitMinor: "8000000",
+    })).rejects.toThrow("Policy changed in another session");
+  });
+
+  it("lets a merchant create and deactivate products exposed through MCP search", async () => {
+    const product = await service.createMerchantOffer({
+      merchantId: "merchant_demo",
+      name: "Campaign Audit",
+      description: "A structured audit of one digital campaign.",
+      priceMinor: "2200000",
+      fulfillmentMethod: "digital_service",
+    });
+    expect(product).toMatchObject({ name: "Campaign Audit", active: true, priceMinor: "2200000" });
+    const offerId = product.offerId as string;
+    expect(await service.searchOffers("merchant_demo", "Campaign")).toHaveLength(1);
+    await service.setMerchantOfferActive("merchant_demo", offerId, false);
+    expect(await service.searchOffers("merchant_demo", "Campaign")).toHaveLength(0);
   });
 });

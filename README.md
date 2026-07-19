@@ -29,6 +29,7 @@ This starts:
 - Consumer approval web app at `http://localhost:3000`.
 - Merchant console at `http://localhost:3001`.
 - PostgreSQL 18 at `localhost:54329`.
+- An isolated, temporary test PostgreSQL instance at `localhost:54330` when `pnpm test` runs.
 
 In another terminal, run the two-server reference consumer agent:
 
@@ -36,7 +37,15 @@ In another terminal, run the two-server reference consumer agent:
 pnpm demo
 ```
 
-The agent prints a consumer approval URL and waits. Open the URL, review the immutable quote, and approve it. For automated local verification only, use `pnpm demo:auto`; this shortcut still calls the separate approval API and is disabled by design outside sandbox mode.
+The agent first prints an OAuth authorization URL. Open it, sign in as the consumer, and approve the requested MCP scopes. When a payment requires human approval, open the returned approval URL, review the immutable quote, and enter the current authenticator code.
+
+Generate the current sandbox authenticator code with:
+
+```powershell
+pnpm auth:code
+```
+
+For interactive testing, signed quotes last 60 minutes and approval challenges last 45 minutes by default. Both values are sandbox-only and configurable through `.env`.
 
 Verification commands:
 
@@ -48,6 +57,49 @@ pnpm build
 
 The database is preloaded with ₦100,000 of simulated consumer funds. No real money, card data, bank credentials, or reusable approval credentials are used.
 
+Sandbox dashboard accounts:
+
+| Workspace | Email | Password |
+|---|---|---|
+| Consumer | `consumer@payl.local` | `ConsumerDemo!2026` |
+| Merchant | `merchant@payl.local` | `MerchantDemo!2026` |
+
+The consumer TOTP seed is `JBSWY3DPEHPK3PXP`. It is a public local-development secret and must never be reused outside this sandbox.
+
+## Using the dashboards
+
+The consumer dashboard has working navigation for wallet balance, activity, AI permissions, and security. Under **AI permissions**, the consumer can set:
+
+- the amount an AI may auto-approve;
+- the maximum amount per transaction; and
+- the maximum captured amount per day.
+
+Policy updates are versioned and enforced by the wallet when `payment.prepare` is called. The auto-approve limit cannot exceed the transaction limit, and the transaction limit cannot exceed the daily limit.
+
+The merchant dashboard supports multiple products under **Products**. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, and can publish or hide it. Published products immediately appear in `commerce.search_offers` through the merchant MCP server.
+
+Merchants do not manually create a paid order. Orders are generated from authorized checkout so the merchant cannot accidentally record an unpaid sale:
+
+1. The consumer's AI calls `commerce.search_offers` and selects a product.
+2. The AI calls `commerce.create_quote` for that product and quantity.
+3. The AI sends the unchanged signed quote to `payment.prepare` on the consumer wallet.
+4. PAYL applies the consumer's policy and obtains human approval when required.
+5. The AI sends the resulting single-use mandate and signed quote to `commerce.commit_order`.
+6. PAYL captures the reservation, creates the order, and returns a signed receipt.
+
+## Connect PAYL to Codex or another MCP client
+
+This repository includes `.codex/config.toml` with two project-scoped Streamable HTTP connections:
+
+- `payl_wallet` → `http://localhost:4100/mcp/wallet`
+- `payl_merchant` → `http://localhost:4100/mcp/merchants/merchant_demo`
+
+After starting PAYL with `pnpm dev`, trust the repository and restart Codex or open a new Codex task. In Codex, use `/mcp` or **Settings → MCP servers** to connect. PAYL returns protected-resource metadata, Codex opens the consumer login and consent flow, and write-capable tools retain the `writes` approval mode.
+
+To configure another OAuth-capable MCP client, register the same two Streamable HTTP URLs. Clients discover PAYL's OAuth authorization server, dynamically register a client, use authorization code with PKCE, and receive audience-bound bearer tokens for `http://localhost:4100/mcp`.
+
+For a remote AI client, ChatGPT plugin, or hosted Codex environment, `localhost` will not work. Deploy the MCP and authorization endpoints behind public HTTPS and replace the sandbox identity store and deterministic keys with production IAM and KMS-backed signing.
+
 ## Implemented transaction slice
 
 ```text
@@ -57,9 +109,9 @@ PAYL -> signed single-use mandate -> merchant commerce MCP
 merchant -> atomic capture + fulfillment -> signed order receipt
 ```
 
-The current implementation includes Streamable HTTP MCP endpoints, strict shared schemas, Ed25519 JWS signatures, PostgreSQL transactions, a balanced double-entry sandbox ledger, quote-bound mandates, human approval, idempotent capture, audit events, consumer approval UI, merchant console, and a reference MCP client.
+The current implementation includes Streamable HTTP MCP endpoints, OAuth authorization code with PKCE, scoped and audience-bound access tokens, revocable client grants, password sessions, per-approval TOTP, tenant-isolated dashboards, strict shared schemas, Ed25519 JWS signatures, PostgreSQL transactions, a balanced double-entry sandbox ledger, quote-bound mandates, idempotent capture, audit events, and a reference MCP client.
 
-The approval web session uses a clearly marked sandbox identity header. Replacing that boundary with OIDC/MFA and replacing deterministic development keys with KMS-backed signing are mandatory before any hosted or live-funds pilot.
+The local identity provider, seeded passwords, TOTP secret, and deterministic signing keys are development fixtures. Replacing them with independently reviewed IAM, account recovery, protected key storage, and production MFA is mandatory before any hosted or live-funds pilot.
 
 ## What “direct AI payment through MCP” means
 

@@ -4,6 +4,8 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { createPool } from "./db.js";
 import { migrate } from "./migrate.js";
+import { IdentityService } from "./identity.js";
+import { PaylOAuthProvider } from "./oauth.js";
 import { PaylService } from "./service.js";
 
 const config = loadConfig();
@@ -13,8 +15,11 @@ const pool = createPool(config);
 await migrate(pool);
 const service = new PaylService(pool, config);
 await service.seedSandbox();
+const identity = new IdentityService(pool, config);
+await identity.seedSandboxUsers();
+const oauth = new PaylOAuthProvider(pool, config);
 
-const server = createServer(createApp(service, config));
+const server = createServer(createApp(service, identity, oauth, config));
 server.listen(config.port, () => {
   logger.info(
     {

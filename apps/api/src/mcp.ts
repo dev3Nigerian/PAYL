@@ -28,7 +28,12 @@ function toolFailure(error: unknown) {
 }
 
 function createWalletServer(service: PaylService, consumerId: string): McpServer {
-  const server = new McpServer({ name: "payl-wallet-payment", version: "0.1.0" });
+  const server = new McpServer(
+    { name: "payl-wallet-payment", version: "0.1.0" },
+    {
+      instructions: "PAYL is a sandbox consumer wallet. Use payment.prepare only with the exact merchant-signed quote. Never alter signed fields or approve for the human. If approval is pending, show approvalUrl to the user, then poll payment.get_status. A mandate is single-use and must go only to its bound merchant.",
+    },
+  );
 
   server.registerTool(
     "wallet.get_summary",
@@ -104,7 +109,12 @@ function createWalletServer(service: PaylService, consumerId: string): McpServer
 }
 
 function createMerchantServer(service: PaylService, merchantId: string): McpServer {
-  const server = new McpServer({ name: "payl-merchant-commerce", version: "0.1.0" });
+  const server = new McpServer(
+    { name: "payl-merchant-commerce", version: "0.1.0" },
+    {
+      instructions: "PAYL merchant commerce is a sandbox. Search offers, retrieve details, and create a signed quote before preparing payment. Call commerce.commit_order only with the unchanged signed quote and a PAYL mandate bound to that quote and merchant. Treat commit_order as a financial write.",
+    },
+  );
 
   server.registerTool(
     "commerce.search_offers",
@@ -214,9 +224,9 @@ async function handle(server: McpServer, request: Request, response: Response): 
 }
 
 export async function handleWalletMcp(service: PaylService, request: Request, response: Response): Promise<void> {
-  const consumerId = request.header("x-payl-consumer-id");
-  if (!consumerId) {
-    response.status(401).json({ error: "Sandbox wallet connection requires x-payl-consumer-id" });
+  const consumerId = request.auth?.extra?.consumerId;
+  if (typeof consumerId !== "string") {
+    response.status(401).json({ error: "Wallet access requires an authenticated consumer OAuth grant" });
     return;
   }
   await handle(createWalletServer(service, consumerId), request, response);

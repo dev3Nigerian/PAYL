@@ -39,6 +39,11 @@ type OfferRow = {
   fulfillment_method: "digital_download" | "digital_service";
 };
 
+type MerchantOfferRow = OfferRow & {
+  active: boolean;
+  created_at: Date;
+};
+
 type PaymentRow = {
   id: string;
   quote_id: string;
@@ -69,6 +74,17 @@ function asBigInt(value: string | number | bigint): bigint {
   return BigInt(value);
 }
 
+function validatedMinorAmount(value: unknown, label: string, allowZero = false): bigint {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+    throw new DomainError("INVALID_AMOUNT", `${label} must be a non-negative integer minor-unit amount`);
+  }
+  const amount = BigInt(value);
+  if (allowZero ? amount < 0n : amount <= 0n) {
+    throw new DomainError("INVALID_AMOUNT", `${label} must be ${allowZero ? "zero or greater" : "greater than zero"}`);
+  }
+  return amount;
+}
+
 export class PaylService {
   private readonly paylKey: SigningKey;
 
@@ -77,6 +93,10 @@ export class PaylService {
     private readonly config: Config,
   ) {
     this.paylKey = createDeterministicDevKey("payl-mandate-issuer", "payl-sandbox-2026-01");
+  }
+
+  async assertReady(): Promise<void> {
+    await this.pool.query("SELECT 1");
   }
 
   private merchantKey(merchantId: string): SigningKey {
@@ -182,6 +202,88 @@ export class PaylService {
     };
   }
 
+  async listMerchantOffers(merchantId: string): Promise<Array<Record<string, unknown>>> {
+    const result = await this.pool.query<MerchantOfferRow>(
+      `SELECT o.id, o.merchant_id, m.name AS merchant_name, m.server_id, o.name, o.description,
+              o.price_minor::text, o.currency, o.fulfillment_method, o.active, o.created_at
+       FROM offers o JOIN merchants m ON m.id = o.merchant_id
+       WHERE o.merchant_id = $1
+       ORDER BY o.created_at DESC, o.id`,
+      [merchantId],
+    );
+    return result.rows.map((offer) => ({
+      offerId: offer.id,
+      merchantId: offer.merchant_id,
+      name: offer.name,
+      description: offer.description,
+      priceMinor: offer.price_minor,
+      currency: offer.currency,
+      fulfillmentMethod: offer.fulfillment_method,
+      active: offer.active,
+      createdAt: offer.created_at.toISOString(),
+    }));
+  }
+
+  async createMerchantOffer(input: {
+    merchantId: string;
+    name: string;
+    description: string;
+    priceMinor: string;
+    fulfillmentMethod: "digital_download" | "digital_service";
+  }): Promise<Record<string, unknown>> {
+    const name = input.name.trim();
+    const description = input.description.trim();
+    if (name.length < 2 || name.length > 120) {
+      throw new DomainError("INVALID_PRODUCT_NAME", "Product name must contain 2 to 120 characters");
+    }
+    if (description.length < 5 || description.length > 500) {
+      throw new DomainError("INVALID_PRODUCT_DESCRIPTION", "Product description must contain 5 to 500 characters");
+    }
+    if (!(["digital_download", "digital_service"] as const).includes(input.fulfillmentMethod)) {
+      throw new DomainError("INVALID_FULFILLMENT", "Choose digital download or digital service fulfillment");
+    }
+    const price = validatedMinorAmount(input.priceMinor, "Product price");
+    const merchant = requireValue(
+      (await this.pool.query<{ currency: string; status: string }>(
+        "SELECT currency, status FROM merchants WHERE id = $1",
+        [input.merchantId],
+      )).rows[0],
+      "MERCHANT_NOT_FOUND",
+      "Merchant was not found",
+    );
+    if (merchant.status !== "active") throw new DomainError("MERCHANT_SUSPENDED", "Merchant is not active", 403);
+
+    const offerId = `offer_${randomUUID().replaceAll("-", "")}`;
+    await this.pool.query(
+      `INSERT INTO offers(id, merchant_id, name, description, price_minor, currency, fulfillment_method, active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
+      [offerId, input.merchantId, name, description, price.toString(), merchant.currency, input.fulfillmentMethod],
+    );
+    await this.audit(this.pool, offerId, "merchant", input.merchantId, "offer.created", "offer", offerId, {
+      priceMinor: price.toString(),
+      currency: merchant.currency,
+    });
+    return requireValue(
+      (await this.listMerchantOffers(input.merchantId)).find((offer) => offer.offerId === offerId),
+      "OFFER_NOT_FOUND",
+      "Created product could not be loaded",
+    );
+  }
+
+  async setMerchantOfferActive(merchantId: string, offerId: string, active: boolean): Promise<Record<string, unknown>> {
+    const updated = (await this.pool.query<{ id: string }>(
+      `UPDATE offers SET active = $3 WHERE id = $1 AND merchant_id = $2 RETURNING id`,
+      [offerId, merchantId, active],
+    )).rows[0];
+    requireValue(updated, "OFFER_NOT_FOUND", "Product was not found");
+    await this.audit(this.pool, offerId, "merchant", merchantId, active ? "offer.activated" : "offer.deactivated", "offer", offerId, {});
+    return requireValue(
+      (await this.listMerchantOffers(merchantId)).find((offer) => offer.offerId === offerId),
+      "OFFER_NOT_FOUND",
+      "Updated product could not be loaded",
+    );
+  }
+
   async createQuote(merchantId: string, offerId: string, quantity: number): Promise<SignedQuote> {
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
       throw new DomainError("INVALID_QUANTITY", "Quantity must be an integer between 1 and 100");
@@ -217,7 +319,7 @@ export class PaylService {
       termsUri: "https://sandbox.payl.local/terms/digital-goods-v1",
       termsHash: sha256Hex("PAYL sandbox digital goods terms v1"),
       createdAt,
-      expiresAt: futureIso(10 * 60_000),
+      expiresAt: futureIso(this.config.sandboxQuoteTtlMinutes * 60_000),
     });
     const jws = await signPayload(payload, this.merchantKey(merchantId));
     const signedQuote = SignedQuoteSchema.parse({ payload, jws, hash: sha256Hex(jws) });
@@ -297,6 +399,57 @@ export class PaylService {
     };
   }
 
+  async updateWalletPolicy(input: {
+    consumerId: string;
+    expectedVersion: number;
+    autoApproveLimitMinor: string;
+    perTransactionLimitMinor: string;
+    dailyLimitMinor: string;
+  }): Promise<Record<string, unknown>> {
+    if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 1) {
+      throw new DomainError("INVALID_POLICY_VERSION", "A valid current policy version is required");
+    }
+    const autoApprove = validatedMinorAmount(input.autoApproveLimitMinor, "Auto-approve limit", true);
+    const perTransaction = validatedMinorAmount(input.perTransactionLimitMinor, "Per-transaction limit");
+    const daily = validatedMinorAmount(input.dailyLimitMinor, "Daily limit");
+    if (autoApprove > perTransaction) {
+      throw new DomainError("INVALID_POLICY_LIMITS", "Auto-approve limit cannot exceed the per-transaction limit");
+    }
+    if (perTransaction > daily) {
+      throw new DomainError("INVALID_POLICY_LIMITS", "Per-transaction limit cannot exceed the daily limit");
+    }
+
+    const updated = (await this.pool.query<{ version: number }>(
+      `UPDATE spending_policies
+       SET version = version + 1,
+           auto_approve_limit_minor = $3,
+           per_transaction_limit_minor = $4,
+           daily_limit_minor = $5,
+           updated_at = now()
+       WHERE consumer_id = $1 AND version = $2
+       RETURNING version`,
+      [
+        input.consumerId,
+        input.expectedVersion,
+        autoApprove.toString(),
+        perTransaction.toString(),
+        daily.toString(),
+      ],
+    )).rows[0];
+    if (!updated) {
+      const exists = (await this.pool.query("SELECT 1 FROM spending_policies WHERE consumer_id = $1", [input.consumerId])).rowCount;
+      if (!exists) throw new DomainError("POLICY_NOT_FOUND", "No spending policy is configured", 404);
+      throw new DomainError("POLICY_VERSION_CONFLICT", "Policy changed in another session; refresh and try again", 409, true);
+    }
+    await this.audit(this.pool, newId("policy_change"), "consumer", input.consumerId, "policy.updated", "policy", input.consumerId, {
+      version: updated.version,
+      autoApproveLimitMinor: autoApprove.toString(),
+      perTransactionLimitMinor: perTransaction.toString(),
+      dailyLimitMinor: daily.toString(),
+    });
+    return this.walletPolicy(input.consumerId);
+  }
+
   async preparePayment(input: {
     consumerId: string;
     agentClientId: string;
@@ -369,7 +522,12 @@ export class PaylService {
       }
 
       const paymentId = newId("payment");
-      const expiresAt = new Date(Math.min(quote.expires_at.getTime(), Date.now() + 8 * 60_000));
+      const expiresAt = new Date(
+        Math.min(
+          quote.expires_at.getTime(),
+          Date.now() + this.config.sandboxApprovalTtlMinutes * 60_000,
+        ),
+      );
       const autoApproved = amount <= asBigInt(policy.auto_approve_limit_minor);
       await client.query(
         `INSERT INTO payment_intents(
@@ -465,7 +623,7 @@ export class PaylService {
   }
 
   async decideApproval(approvalId: string, consumerId: string, decision: "approve" | "decline"): Promise<Record<string, unknown>> {
-    return inTransaction(this.pool, async (client) => {
+    const result = await inTransaction(this.pool, async (client) => {
       const row = requireValue(
         (await client.query<{
           id: string;
@@ -494,7 +652,7 @@ export class PaylService {
       if (row.expires_at.getTime() <= Date.now()) {
         await client.query("UPDATE approval_challenges SET status = 'expired', decided_at = now() WHERE id = $1", [approvalId]);
         await client.query("UPDATE payment_intents SET status = 'expired', updated_at = now() WHERE id = $1", [payment.id]);
-        throw new DomainError("APPROVAL_EXPIRED", "Approval challenge has expired");
+        return { approvalId, paymentId: payment.id, status: "expired" };
       }
       if (decision === "decline") {
         await client.query("UPDATE approval_challenges SET status = 'declined', decided_at = now() WHERE id = $1", [approvalId]);
@@ -521,6 +679,10 @@ export class PaylService {
       });
       return { approvalId, paymentId: payment.id, status: "approved", mandateId: mandate.payload.mandateId };
     });
+    if (result.status === "expired") {
+      throw new DomainError("APPROVAL_EXPIRED", "Approval challenge has expired");
+    }
+    return result;
   }
 
   async paymentStatus(paymentId: string, consumerId: string): Promise<Record<string, unknown>> {
@@ -689,16 +851,95 @@ export class PaylService {
     return OrderReceiptSchema.parse({ payload: row.receipt_payload, jws: row.receipt_jws });
   }
 
-  async demoState(): Promise<Record<string, unknown>> {
-    const [wallet, orders, journal] = await Promise.all([
-      this.walletSummary(this.config.sandboxConsumerId),
+  async consumerDashboard(consumerId: string): Promise<Record<string, unknown>> {
+    const [wallet, policy, orders] = await Promise.all([
+      this.walletSummary(consumerId),
+      this.walletPolicy(consumerId),
       this.pool.query<{
         id: string;
         status: string;
         captured_amount_minor: string;
         currency: string;
+        merchant_name: string;
+        offer_id: string;
+        offer_name: string;
+        fulfillment_reference: string;
         created_at: Date;
-      }>("SELECT id, status, captured_amount_minor::text, currency, created_at FROM orders ORDER BY created_at DESC LIMIT 20"),
+      }>(
+        `SELECT o.id, o.status, o.captured_amount_minor::text, o.currency,
+                m.name AS merchant_name, f.id AS offer_id, f.name AS offer_name,
+                o.fulfillment_reference, o.created_at
+         FROM orders o
+         JOIN payment_intents p ON p.id = o.payment_id
+         JOIN merchants m ON m.id = o.merchant_id
+         JOIN quotes q ON q.id = o.quote_id
+         JOIN offers f ON f.id = q.offer_id
+         WHERE p.consumer_id = $1
+         ORDER BY o.created_at DESC LIMIT 50`,
+        [consumerId],
+      ),
+    ]);
+    return {
+      sandbox: true,
+      wallet,
+      policy,
+      orders: orders.rows.map((row) => ({ ...row, created_at: row.created_at.toISOString() })),
+    };
+  }
+
+  async merchantDashboard(merchantId: string): Promise<Record<string, unknown>> {
+    const [merchant, offers, orders, journal] = await Promise.all([
+      this.pool.query<{
+        id: string;
+        name: string;
+        currency: string;
+        payable_minor: string;
+        gross_sales_minor: string;
+        platform_fees_minor: string;
+        net_sales_minor: string;
+        completed_orders: string;
+      }>(
+        `SELECT m.id, m.name, m.currency,
+                COALESCE((
+                  SELECT sum(l.amount_minor)::text
+                  FROM ledger_accounts a
+                  LEFT JOIN journal_lines l ON l.account_id = a.id
+                  WHERE a.owner_type = 'merchant' AND a.owner_id = m.id
+                    AND a.account_type = 'payable' AND a.currency = m.currency
+                ), '0') AS payable_minor,
+                COALESCE(sum(o.captured_amount_minor), 0)::text AS gross_sales_minor,
+                COALESCE(sum(o.platform_fee_minor), 0)::text AS platform_fees_minor,
+                COALESCE(sum(o.captured_amount_minor - o.platform_fee_minor), 0)::text AS net_sales_minor,
+                count(o.id)::text AS completed_orders
+         FROM merchants m
+         LEFT JOIN orders o ON o.merchant_id = m.id AND o.status IN ('confirmed', 'fulfilled')
+         WHERE m.id = $1
+         GROUP BY m.id, m.name, m.currency`,
+        [merchantId],
+      ),
+      this.listMerchantOffers(merchantId),
+      this.pool.query<{
+        id: string;
+        status: string;
+        captured_amount_minor: string;
+        currency: string;
+        merchant_name: string;
+        offer_id: string;
+        offer_name: string;
+        fulfillment_reference: string;
+        created_at: Date;
+      }>(
+        `SELECT o.id, o.status, o.captured_amount_minor::text, o.currency,
+                m.name AS merchant_name, f.id AS offer_id, f.name AS offer_name,
+                o.fulfillment_reference, o.created_at
+         FROM orders o
+         JOIN merchants m ON m.id = o.merchant_id
+         JOIN quotes q ON q.id = o.quote_id
+         JOIN offers f ON f.id = q.offer_id
+         WHERE o.merchant_id = $1
+         ORDER BY o.created_at DESC LIMIT 50`,
+        [merchantId],
+      ),
       this.pool.query<{ entries: string; unbalanced_entries: string }>(
         `SELECT count(*)::text AS entries,
                 count(*) FILTER (WHERE balance <> 0)::text AS unbalanced_entries
@@ -711,10 +952,32 @@ export class PaylService {
     ]);
     return {
       sandbox: true,
-      wallet,
+      merchant: merchant.rows[0]
+        ? {
+            merchantId: merchant.rows[0].id,
+            name: merchant.rows[0].name,
+            currency: merchant.rows[0].currency,
+            balances: { payable: merchant.rows[0].payable_minor },
+            totals: {
+              grossSalesMinor: merchant.rows[0].gross_sales_minor,
+              platformFeesMinor: merchant.rows[0].platform_fees_minor,
+              netSalesMinor: merchant.rows[0].net_sales_minor,
+              completedOrders: merchant.rows[0].completed_orders,
+            },
+          }
+        : null,
+      offers,
       orders: orders.rows.map((row) => ({ ...row, created_at: row.created_at.toISOString() })),
       ledger: journal.rows[0] ?? { entries: "0", unbalanced_entries: "0" },
     };
+  }
+
+  async demoState(): Promise<Record<string, unknown>> {
+    const [consumer, merchant] = await Promise.all([
+      this.consumerDashboard(this.config.sandboxConsumerId),
+      this.merchantDashboard(this.config.sandboxMerchantId),
+    ]);
+    return { ...consumer, ...merchant };
   }
 
   private async loadOffer(merchantId: string, offerId: string): Promise<OfferRow> {
