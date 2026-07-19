@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from "no
 import { promisify } from "node:util";
 import type pg from "pg";
 import type { Config } from "./config.js";
+import { inTransaction } from "./db.js";
 import { DomainError, requireValue } from "./errors.js";
 
 const scryptAsync = promisify(scrypt);
@@ -108,6 +109,78 @@ export class IdentityService {
         merchantPassword.hash,
       ],
     );
+  }
+
+  async registerMerchant(input: {
+    businessName: unknown;
+    adminName: unknown;
+    email: unknown;
+    password: unknown;
+  }): Promise<{
+    session: AuthSession;
+    token: string;
+    merchant: { merchantId: string; name: string; currency: string; serverId: string; mcpUrl: string };
+  }> {
+    const businessName = validatedName(input.businessName, "Business name");
+    const adminName = validatedName(input.adminName, "Administrator name");
+    if (typeof input.email !== "string") throw new DomainError("INVALID_EMAIL", "Enter a valid email address");
+    const email = input.email.trim().toLowerCase();
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new DomainError("INVALID_EMAIL", "Enter a valid email address");
+    }
+    if (typeof input.password !== "string" || input.password.length < 12 || input.password.length > 128) {
+      throw new DomainError("INVALID_PASSWORD", "Password must contain 12 to 128 characters");
+    }
+
+    const suffix = randomUUID().replaceAll("-", "");
+    const merchantId = `merchant_${suffix}`;
+    const userId = `user_${randomUUID().replaceAll("-", "")}`;
+    const serverId = `merchant_server_${suffix}`;
+    const currency = "NGN";
+    const password = await createPasswordRecord(input.password);
+    try {
+      await inTransaction(this.pool, async (client) => {
+        await client.query(
+          `INSERT INTO merchants(id, name, server_id, currency, signing_key_id, status)
+           VALUES ($1, $2, $3, $4, $5, 'active')`,
+          [merchantId, businessName, serverId, currency, `${merchantId}-sandbox-2026-01`],
+        );
+        await client.query(
+          `INSERT INTO ledger_accounts(id, owner_type, owner_id, account_type, currency)
+           VALUES ($1, 'merchant', $2, 'payable', $3)`,
+          [`acct_${merchantId}_payable`, merchantId, currency],
+        );
+        await client.query(
+          `INSERT INTO auth_users(
+             id, email, display_name, role, merchant_id, password_salt, password_hash
+           ) VALUES ($1, $2, $3, 'merchant_admin', $4, $5, $6)`,
+          [userId, email, adminName, merchantId, password.salt, password.hash],
+        );
+        await client.query(
+          `INSERT INTO audit_events(
+             correlation_id, actor_type, actor_id, event_type, object_type, object_id, metadata
+           ) VALUES ($1, 'merchant', $1, 'merchant.registered', 'merchant', $1, $2::jsonb)`,
+          [merchantId, JSON.stringify({ businessName, adminName, email, currency, serverId })],
+        );
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") {
+        throw new DomainError("EMAIL_ALREADY_REGISTERED", "A merchant account already uses this email", 409);
+      }
+      throw error;
+    }
+
+    const login = await this.login(email, input.password, "merchant_admin");
+    return {
+      ...login,
+      merchant: {
+        merchantId,
+        name: businessName,
+        currency,
+        serverId,
+        mcpUrl: new URL(`/mcp/merchants/${merchantId}`, this.config.publicBaseUrl).href,
+      },
+    };
   }
 
   async login(email: unknown, password: unknown, expectedRole?: UserRole): Promise<{ session: AuthSession; token: string }> {
@@ -222,6 +295,15 @@ export class IdentityService {
       expiresAt: expiresAt.toISOString(),
     };
   }
+}
+
+function validatedName(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new DomainError("INVALID_NAME", `${label} is required`);
+  const name = value.trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 120) {
+    throw new DomainError("INVALID_NAME", `${label} must contain 2 to 120 characters`);
+  }
+  return name;
 }
 
 export function bearerToken(header: string | undefined): string | null {

@@ -28,6 +28,10 @@ h2,h3 { letter-spacing:-.025em; }
 .metrics article { padding:22px; }
 .metrics span { display:block; color:var(--muted); font-size:13px; }
 .metrics strong { display:block; margin-top:16px; font-size:28px; letter-spacing:-.04em; }
+.mcp-card { display:flex; align-items:center; justify-content:space-between; gap:24px; margin:0 0 24px; padding:22px; border:1px solid #cfe0c6; border-radius:18px; background:#f8fff0; }
+.mcp-card h2 { margin:0 0 12px; font-size:18px; }
+.mcp-card code { display:block; overflow-wrap:anywhere; color:var(--green); font-size:13px; }
+.mcp-card small { display:block; margin-top:8px; color:var(--muted); }
 .panel { overflow:hidden; }
 .panelhead { padding:22px; display:flex; justify-content:space-between; align-items:center; gap:20px; border-bottom:1px solid #e7eae4; }
 .panelhead h2 { margin:0; font-size:18px; }
@@ -98,5 +102,6 @@ h2,h3 { letter-spacing:-.025em; }
 .auth-card input:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(11,107,66,.1); }
 .auth-card .primary-button { width:100%; margin-top:22px; }
 .auth-card small { display:block; margin-top:18px; color:var(--muted); }
+.auth-link { display:block; margin-top:16px; color:var(--green); font-size:13px; font-weight:800; text-align:center; }
 @media(max-width:1100px){ .metrics,.product-grid{grid-template-columns:repeat(2,1fr)} }
-@media(max-width:800px){ .merchant-shell{grid-template-columns:1fr}.merchant-sidebar{display:none}.content{padding:25px}.mobile-nav{display:flex;gap:7px;margin:-7px 0 28px;overflow-x:auto}.mobile-nav button{flex:0 0 auto;border:0;padding:10px 13px;border-radius:10px;color:var(--muted);background:#e5e9e1;font-weight:700}.mobile-nav .active{color:#102018;background:var(--lime)}.metrics,.merchant-balance,.product-grid,.orders-layout,.settlement-grid,.product-form{grid-template-columns:1fr}.product-form .wide{grid-column:auto}.row{grid-template-columns:1fr}.status{display:none} }
+@media(max-width:800px){ .merchant-shell{grid-template-columns:1fr}.merchant-sidebar{display:none}.content{padding:25px}.mobile-nav{display:flex;gap:7px;margin:-7px 0 28px;overflow-x:auto}.mobile-nav button{flex:0 0 auto;border:0;padding:10px 13px;border-radius:10px;color:var(--muted);background:#e5e9e1;font-weight:700}.mobile-nav .active{color:#102018;background:var(--lime)}.metrics,.merchant-balance,.product-grid,.orders-layout,.settlement-grid,.product-form{grid-template-columns:1fr}.product-form .wide{grid-column:auto}.row{grid-template-columns:1fr}.status{display:none}.mcp-card{align-items:flex-start;flex-direction:column} }

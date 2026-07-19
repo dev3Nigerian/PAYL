@@ -188,6 +188,59 @@ export class PaylService {
     }));
   }
 
+  async listMarketplaceMerchants(query?: string): Promise<Array<Record<string, unknown>>> {
+    const search = query?.trim() || null;
+    const result = await this.pool.query<{
+      id: string;
+      name: string;
+      server_id: string;
+      currency: string;
+      active_offers: string;
+    }>(
+      `SELECT m.id, m.name, m.server_id, m.currency, count(o.id)::text AS active_offers
+       FROM merchants m
+       LEFT JOIN offers o ON o.merchant_id = m.id AND o.active = true
+       WHERE m.status = 'active' AND ($1::text IS NULL OR m.name ILIKE '%' || $1 || '%')
+       GROUP BY m.id, m.name, m.server_id, m.currency
+       ORDER BY m.name, m.id
+       LIMIT 100`,
+      [search],
+    );
+    return result.rows.map((merchant) => ({
+      merchantId: merchant.id,
+      name: merchant.name,
+      currency: merchant.currency,
+      activeOffers: merchant.active_offers,
+      directMcpUrl: new URL(`/mcp/merchants/${merchant.id}`, this.config.publicBaseUrl).href,
+    }));
+  }
+
+  async searchMarketplaceOffers(input: { query?: string; merchantId?: string }): Promise<Array<Record<string, unknown>>> {
+    const query = input.query?.trim() || null;
+    const merchantId = input.merchantId?.trim() || null;
+    const result = await this.pool.query<OfferRow>(
+      `SELECT o.id, o.merchant_id, m.name AS merchant_name, m.server_id, o.name, o.description,
+              o.price_minor::text, o.currency, o.fulfillment_method
+       FROM offers o JOIN merchants m ON m.id = o.merchant_id
+       WHERE o.active = true AND m.status = 'active'
+         AND ($1::text IS NULL OR o.merchant_id = $1)
+         AND ($2::text IS NULL OR o.name ILIKE '%' || $2 || '%' OR o.description ILIKE '%' || $2 || '%' OR m.name ILIKE '%' || $2 || '%')
+       ORDER BY o.price_minor, m.name, o.name
+       LIMIT 100`,
+      [merchantId, query],
+    );
+    return result.rows.map((offer) => ({
+      offerId: offer.id,
+      merchantId: offer.merchant_id,
+      merchantName: offer.merchant_name,
+      name: offer.name,
+      description: offer.description,
+      priceMinor: offer.price_minor,
+      currency: offer.currency,
+      fulfillmentMethod: offer.fulfillment_method,
+    }));
+  }
+
   async getOffer(merchantId: string, offerId: string): Promise<Record<string, unknown>> {
     const offer = await this.loadOffer(merchantId, offerId);
     return {
@@ -780,15 +833,37 @@ export class PaylService {
       );
       if (payment.status !== "reserved") throw new DomainError("PAYMENT_NOT_RESERVED", "Payment is not reserved");
 
+      const settlementAccounts = await client.query<{
+        id: string;
+        owner_type: "consumer" | "merchant" | "platform";
+        owner_id: string;
+        account_type: "reserved" | "payable" | "fee_revenue";
+      }>(
+        `SELECT id, owner_type, owner_id, account_type
+         FROM ledger_accounts
+         WHERE currency = $1 AND (
+           (owner_type = 'consumer' AND owner_id = $2 AND account_type = 'reserved') OR
+           (owner_type = 'merchant' AND owner_id = $3 AND account_type = 'payable') OR
+           (owner_type = 'platform' AND owner_id = 'payl' AND account_type = 'fee_revenue')
+         )
+         ORDER BY id FOR UPDATE`,
+        [storedMandate.currency, payment.consumer_id, input.merchantId],
+      );
+      const accountId = (ownerType: string, accountType: string) => requireValue(
+        settlementAccounts.rows.find((account) => account.owner_type === ownerType && account.account_type === accountType)?.id,
+        "SETTLEMENT_ACCOUNT_MISSING",
+        `${ownerType} ${accountType} ledger account is missing`,
+      );
+
       await this.postJournal(client, {
         eventType: "payment_capture",
         idempotencyKey: `capture:${storedMandate.id}`,
         referenceType: "order",
         referenceId: orderId,
         lines: [
-          { accountId: "acct_consumer_reserved", amountMinor: -amount },
-          { accountId: "acct_merchant_payable", amountMinor: merchantNet },
-          { accountId: "acct_platform_fee", amountMinor: fee },
+          { accountId: accountId("consumer", "reserved"), amountMinor: -amount },
+          { accountId: accountId("merchant", "payable"), amountMinor: merchantNet },
+          { accountId: accountId("platform", "fee_revenue"), amountMinor: fee },
         ].filter((line) => line.amountMinor !== 0n),
       });
 
@@ -892,6 +967,7 @@ export class PaylService {
       this.pool.query<{
         id: string;
         name: string;
+        server_id: string;
         currency: string;
         payable_minor: string;
         gross_sales_minor: string;
@@ -899,7 +975,7 @@ export class PaylService {
         net_sales_minor: string;
         completed_orders: string;
       }>(
-        `SELECT m.id, m.name, m.currency,
+        `SELECT m.id, m.name, m.server_id, m.currency,
                 COALESCE((
                   SELECT sum(l.amount_minor)::text
                   FROM ledger_accounts a
@@ -956,6 +1032,8 @@ export class PaylService {
         ? {
             merchantId: merchant.rows[0].id,
             name: merchant.rows[0].name,
+            serverId: merchant.rows[0].server_id,
+            mcpUrl: new URL(`/mcp/merchants/${merchant.rows[0].id}`, this.config.publicBaseUrl).href,
             currency: merchant.rows[0].currency,
             balances: { payable: merchant.rows[0].payable_minor },
             totals: {

@@ -108,6 +108,141 @@ function createWalletServer(service: PaylService, consumerId: string): McpServer
   return server;
 }
 
+function createCommerceNetworkServer(service: PaylService): McpServer {
+  const server = new McpServer(
+    { name: "payl-commerce-network", version: "0.1.0" },
+    {
+      instructions: "PAYL commerce is a multi-merchant sandbox network. Discover registered merchants and compare their active offers through this one connection. Every signed quote remains bound to exactly one merchant. Prepare payment through the wallet, then commit the unchanged quote and single-use mandate here; PAYL routes capture and settlement to the merchant embedded in the signed quote.",
+    },
+  );
+
+  server.registerTool(
+    "commerce.list_merchants",
+    {
+      title: "List PAYL merchants",
+      description: "Discovers active registered merchants without configuring a separate MCP connection for each one.",
+      inputSchema: { query: z.string().max(200).optional() },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ query }) => {
+      try {
+        return result({ merchants: await service.listMarketplaceMerchants(query) });
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "commerce.search_offers",
+    {
+      title: "Search offers across PAYL merchants",
+      description: "Searches active, fixed-price offers across every registered merchant or filters to one merchant.",
+      inputSchema: {
+        query: z.string().max(200).optional(),
+        merchantId: z.string().min(3).max(128).optional(),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ query, merchantId }) => {
+      try {
+        return result({ offers: await service.searchMarketplaceOffers({ query, merchantId }) });
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "commerce.get_offer",
+    {
+      title: "Get a merchant offer",
+      description: "Returns one current offer from the specified registered merchant.",
+      inputSchema: {
+        merchantId: z.string().min(3).max(128),
+        offerId: z.string().min(3).max(128),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ merchantId, offerId }) => {
+      try {
+        return result(await service.getOffer(merchantId, offerId));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "commerce.create_quote",
+    {
+      title: "Create a merchant-bound signed quote",
+      description: "Creates an immutable quote signed for the selected merchant and offer.",
+      inputSchema: {
+        merchantId: z.string().min(3).max(128),
+        offerId: z.string().min(3).max(128),
+        quantity: z.number().int().positive().max(100).default(1),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ merchantId, offerId, quantity }) => {
+      try {
+        return result(await service.createQuote(merchantId, offerId, quantity));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "commerce.commit_order",
+    {
+      title: "Commit and fulfill a merchant-bound order",
+      description: "Routes the order to the merchant signed into the quote, captures the matching mandate, and returns a signed receipt.",
+      inputSchema: {
+        signedQuote: SignedQuoteSchema,
+        mandate: PaymentMandateSchema,
+        idempotencyKey: z.string().min(8).max(128),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ signedQuote, mandate, idempotencyKey }) => {
+      try {
+        return result(await service.commitOrder({
+          merchantId: signedQuote.payload.merchantId,
+          signedQuote,
+          mandate,
+          idempotencyKey,
+        }));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "commerce.get_order",
+    {
+      title: "Get a merchant order receipt",
+      description: "Returns a signed receipt from the merchant that owns the order.",
+      inputSchema: {
+        merchantId: z.string().min(3).max(128),
+        orderId: z.string().min(3).max(128),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ merchantId, orderId }) => {
+      try {
+        return result(await service.getOrder(merchantId, orderId));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  return server;
+}
+
 function createMerchantServer(service: PaylService, merchantId: string): McpServer {
   const server = new McpServer(
     { name: "payl-merchant-commerce", version: "0.1.0" },
@@ -230,6 +365,10 @@ export async function handleWalletMcp(service: PaylService, request: Request, re
     return;
   }
   await handle(createWalletServer(service, consumerId), request, response);
+}
+
+export async function handleCommerceMcp(service: PaylService, request: Request, response: Response): Promise<void> {
+  await handle(createCommerceNetworkServer(service), request, response);
 }
 
 export async function handleMerchantMcp(service: PaylService, request: Request, response: Response): Promise<void> {

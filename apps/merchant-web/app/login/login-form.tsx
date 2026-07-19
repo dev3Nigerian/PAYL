@@ -35,5 +35,6 @@ export default function LoginForm({ demoEmail, demoPassword }: { demoEmail: stri
     {error && <p className="form-notice error">{error}</p>}
     <button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
     <small>Sandbox credentials are prefilled for local testing.</small>
+    <a className="auth-link" href="/register">Register another merchant</a>
   </form></main>;
 }

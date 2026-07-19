@@ -7,7 +7,7 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import type { Config } from "./config.js";
 import { DomainError } from "./errors.js";
 import { bearerToken, cookieValue, type AuthSession, type IdentityService, type UserRole } from "./identity.js";
-import { handleMerchantMcp, handleWalletMcp } from "./mcp.js";
+import { handleCommerceMcp, handleMerchantMcp, handleWalletMcp } from "./mcp.js";
 import { MCP_SCOPES, type PaylOAuthProvider, requireToolScope, toolScopeForRequest } from "./oauth.js";
 import type { PaylService } from "./service.js";
 
@@ -89,6 +89,20 @@ export function createApp(
       next(error);
     }
   });
+  app.post("/mcp/commerce", bearer, (request, _response, next) => {
+    try {
+      requireToolScope(request, toolScopeForRequest(request, "merchant"));
+      next();
+    } catch (error) {
+      next(error);
+    }
+  }, async (request, response, next) => {
+    try {
+      await handleCommerceMcp(service, request, response);
+    } catch (error) {
+      next(error);
+    }
+  });
   app.post("/mcp/merchants/:merchantId", bearer, (request, _response, next) => {
     try {
       requireToolScope(request, toolScopeForRequest(request, "merchant"));
@@ -103,11 +117,25 @@ export function createApp(
       next(error);
     }
   });
-  app.all(["/mcp/wallet", "/mcp/merchants/:merchantId"], (_request, response) => {
+  app.all(["/mcp/wallet", "/mcp/commerce", "/mcp/merchants/:merchantId"], (_request, response) => {
     response.status(405).set("Allow", "POST").json({ error: "The stateless MCP transport accepts POST only" });
   });
 
   const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: "draft-8", legacyHeaders: false });
+  const registrationLimiter = rateLimit({ windowMs: 60 * 60_000, limit: 10, standardHeaders: "draft-8", legacyHeaders: false });
+  app.post("/api/auth/register/merchant", registrationLimiter, async (request, response, next) => {
+    try {
+      const result = await identity.registerMerchant({
+        businessName: request.body?.businessName,
+        adminName: request.body?.adminName,
+        email: request.body?.email,
+        password: request.body?.password,
+      });
+      response.status(201).json({ ...result.session, merchant: result.merchant, sessionToken: result.token });
+    } catch (error) {
+      next(error);
+    }
+  });
   app.post("/api/auth/login", loginLimiter, async (request, response, next) => {
     try {
       const role = request.body?.role;
@@ -214,6 +242,42 @@ export function createApp(
       }
       await identity.revokeGrant(session.userId, request.body.clientId, request.body.resource);
       response.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/merchant/offers", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json({ offers: await service.listMerchantOffers(requireMerchantId(session)) });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/merchant/offers", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.status(201).json(await service.createMerchantOffer({
+        merchantId: requireMerchantId(session),
+        name: request.body?.name,
+        description: request.body?.description,
+        priceMinor: request.body?.priceMinor,
+        fulfillmentMethod: request.body?.fulfillmentMethod,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.patch("/api/merchant/offers/:offerId", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      if (typeof request.body?.active !== "boolean") throw new DomainError("INVALID_PRODUCT_STATUS", "Product active status must be true or false");
+      response.json(await service.setMerchantOfferActive(
+        requireMerchantId(session),
+        request.params.offerId ?? "",
+        request.body.active,
+      ));
     } catch (error) {
       next(error);
     }

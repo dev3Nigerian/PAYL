@@ -72,6 +72,43 @@ describe("PAYL identity and MCP authorization", () => {
     await request(app).get("/api/consumer/dashboard").set("authorization", `Bearer ${merchantToken}`).expect(403);
   });
 
+  it("registers and provisions an isolated merchant workspace", async () => {
+    const registration = await request(app).post("/api/auth/register/merchant").send({
+      businessName: "Second Signal Studio",
+      adminName: "Ada Merchant",
+      email: "ada@secondsignal.test",
+      password: "SecondSignal!2026",
+    }).expect(201);
+    const merchantId = registration.body.merchant.merchantId as string;
+    const token = registration.body.sessionToken as string;
+    expect(merchantId).toMatch(/^merchant_[a-f0-9]{32}$/);
+    expect(registration.body.merchant.mcpUrl).toBe(`http://localhost:4100/mcp/merchants/${merchantId}`);
+
+    const dashboard = await request(app).get("/api/merchant/dashboard").set("authorization", `Bearer ${token}`).expect(200);
+    expect(dashboard.body.merchant).toMatchObject({
+      merchantId,
+      name: "Second Signal Studio",
+      currency: "NGN",
+      mcpUrl: `http://localhost:4100/mcp/merchants/${merchantId}`,
+    });
+    expect(dashboard.body.offers).toEqual([]);
+
+    const product = await request(app).post("/api/merchant/offers").set("authorization", `Bearer ${token}`).send({
+      name: "Competitor Quote Pack",
+      description: "A comparison-ready merchant quote for sandbox testing.",
+      priceMinor: "180000",
+      fulfillmentMethod: "digital_service",
+    }).expect(201);
+    expect(product.body).toMatchObject({ merchantId, priceMinor: "180000", active: true });
+
+    await request(app).post("/api/auth/register/merchant").send({
+      businessName: "Duplicate Email Shop",
+      adminName: "Another Admin",
+      email: "ada@secondsignal.test",
+      password: "AnotherMerchant!2026",
+    }).expect(409);
+  });
+
   it("requires a valid TOTP code for human payment approval", async () => {
     const login = await request(app).post("/api/auth/login").send({
       email: config.sandboxConsumerEmail,
@@ -92,6 +129,19 @@ describe("PAYL identity and MCP authorization", () => {
   });
 
   it("completes PKCE authorization, calls a scoped MCP tool, and revokes the grant", async () => {
+    const networkMerchant = await identity.registerMerchant({
+      businessName: "Network Merchant Two",
+      adminName: "Network Admin",
+      email: "network@merchant.test",
+      password: "NetworkMerchant!2026",
+    });
+    const networkOffer = await service.createMerchantOffer({
+      merchantId: networkMerchant.merchant.merchantId,
+      name: "Network Comparison Service",
+      description: "A service discovered without adding another MCP connection.",
+      priceMinor: "175000",
+      fulfillmentMethod: "digital_service",
+    });
     const login = await request(app).post("/api/auth/login").send({
       email: config.sandboxConsumerEmail,
       password: config.sandboxConsumerPassword,
@@ -143,6 +193,35 @@ describe("PAYL identity and MCP authorization", () => {
       .set("accept", "application/json, text/event-stream")
       .send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "wallet.get_summary", arguments: {} } })
       .expect(200);
+
+    const directory = await request(app).post("/mcp/commerce")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("accept", "application/json, text/event-stream")
+      .send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "commerce.list_merchants", arguments: {} } })
+      .expect(200);
+    expect(JSON.stringify(directory.body)).toContain("Network Merchant Two");
+
+    const marketplaceSearch = await request(app).post("/mcp/commerce")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("accept", "application/json, text/event-stream")
+      .send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "commerce.search_offers", arguments: { query: "comparison" } } })
+      .expect(200);
+    expect(JSON.stringify(marketplaceSearch.body)).toContain("Network Comparison Service");
+
+    const networkQuote = await request(app).post("/mcp/commerce")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("accept", "application/json, text/event-stream")
+      .send({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "commerce.create_quote",
+          arguments: { merchantId: networkMerchant.merchant.merchantId, offerId: networkOffer.offerId, quantity: 1 },
+        },
+      })
+      .expect(200);
+    expect(JSON.stringify(networkQuote.body)).toContain(networkMerchant.merchant.merchantId);
 
     await request(app).delete("/api/oauth/grants").set("authorization", `Bearer ${sessionToken}`).send({ clientId, resource }).expect(204);
     await request(app).post("/mcp/wallet")

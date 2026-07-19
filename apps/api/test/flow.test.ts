@@ -155,4 +155,69 @@ describe("PAYL signed quote to receipt flow", () => {
     await service.setMerchantOfferActive("merchant_demo", offerId, false);
     expect(await service.searchOffers("merchant_demo", "Campaign")).toHaveLength(0);
   });
+
+  it("creates quotes for two merchants and settles each payment independently", async () => {
+    const registered = await identity.registerMerchant({
+      businessName: "Second Signal Studio",
+      adminName: "Ada Merchant",
+      email: "ada@secondsignal.test",
+      password: "SecondSignal!2026",
+    });
+    const secondMerchantId = registered.merchant.merchantId;
+    const demoOffer = await service.createMerchantOffer({
+      merchantId: "merchant_demo",
+      name: "Atlas Comparison Quote",
+      description: "A low-value quote used for multi-merchant payment testing.",
+      priceMinor: "100000",
+      fulfillmentMethod: "digital_service",
+    });
+    const secondOffer = await service.createMerchantOffer({
+      merchantId: secondMerchantId,
+      name: "Second Signal Comparison Quote",
+      description: "A second independent quote used for comparison testing.",
+      priceMinor: "200000",
+      fulfillmentMethod: "digital_service",
+    });
+    const atlasQuote = await service.createQuote("merchant_demo", demoOffer.offerId as string, 1);
+    const secondQuote = await service.createQuote(secondMerchantId, secondOffer.offerId as string, 1);
+    expect(atlasQuote.payload.merchantId).toBe("merchant_demo");
+    expect(secondQuote.payload.merchantId).toBe(secondMerchantId);
+    expect(atlasQuote.hash).not.toBe(secondQuote.hash);
+
+    const atlasPayment = await service.preparePayment({
+      consumerId: "consumer_demo",
+      agentClientId: "agent_multi_merchant",
+      signedQuote: atlasQuote,
+      idempotencyKey: "prepare-atlas-multi-001",
+    });
+    const secondPayment = await service.preparePayment({
+      consumerId: "consumer_demo",
+      agentClientId: "agent_multi_merchant",
+      signedQuote: secondQuote,
+      idempotencyKey: "prepare-second-multi-001",
+    });
+    if (atlasPayment.status !== "reserved" || secondPayment.status !== "reserved") {
+      throw new Error("Expected both policy-approved payments to reserve immediately");
+    }
+    await service.commitOrder({
+      merchantId: "merchant_demo",
+      signedQuote: atlasQuote,
+      mandate: atlasPayment.mandate,
+      idempotencyKey: "commit-atlas-multi-001",
+    });
+    await service.commitOrder({
+      merchantId: secondMerchantId,
+      signedQuote: secondQuote,
+      mandate: secondPayment.mandate,
+      idempotencyKey: "commit-second-multi-001",
+    });
+
+    const atlas = await service.merchantDashboard("merchant_demo") as { merchant: { balances: { payable: string }; totals: { completedOrders: string } } };
+    const second = await service.merchantDashboard(secondMerchantId) as { merchant: { balances: { payable: string }; totals: { completedOrders: string } } };
+    expect(atlas.merchant.balances.payable).toBe("98000");
+    expect(second.merchant.balances.payable).toBe("196000");
+    expect(atlas.merchant.totals.completedOrders).toBe("1");
+    expect(second.merchant.totals.completedOrders).toBe("1");
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "9700000", reserved: "0" });
+  });
 });

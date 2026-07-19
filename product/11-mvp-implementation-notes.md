@@ -2,9 +2,9 @@
 
 ## Delivered boundary
 
-The repository implements the first complete consumer-to-merchant MCP transaction slice using simulated NGN funds:
+The repository implements the first complete consumer-to-multiple-merchant MCP transaction slice using simulated NGN funds:
 
-1. A consumer MCP host connects independently to the merchant commerce server and PAYL wallet server.
+1. A consumer MCP host connects once to the PAYL commerce network and PAYL wallet server.
 2. The merchant creates an Ed25519-signed, expiring quote.
 3. PAYL verifies the signature and stored quote, evaluates the consumer policy, and creates a separate approval challenge when required.
 4. Approval reserves funds with a balanced ledger journal and issues a signed, single-use mandate bound to the complete signed quote.
@@ -24,9 +24,12 @@ The repository implements the first complete consumer-to-merchant MCP transactio
 MCP endpoints:
 
 - `POST /mcp/wallet`, protected by consumer OAuth scopes.
+- `POST /mcp/commerce`, the consumer's persistent multi-merchant discovery, quote, and order connection.
 - `POST /mcp/merchants/:merchantId`.
 
-Both MCP surfaces use OAuth authorization code with PKCE, a shared audience-bound MCP resource, dynamic client registration, scoped access tokens, refresh-token rotation, and consumer-controlled grant revocation.
+Sandbox merchants may self-register through the merchant console. Registration creates an isolated identity, payable ledger account, signing identity, and MCP endpoint. Capture resolves ledger accounts by consumer and merchant ownership rather than using seeded account IDs, allowing independent quotes and settlement across multiple registered merchants.
+
+All MCP surfaces use OAuth authorization code with PKCE, a shared audience-bound MCP resource, dynamic client registration, scoped access tokens, refresh-token rotation, and consumer-controlled grant revocation. The shared commerce endpoint discovers newly registered merchants without another consumer configuration or grant.
 
 ## Financial invariants
 
@@ -51,7 +54,7 @@ Both MCP surfaces use OAuth authorization code with PKCE, a shared audience-boun
 - Identity uses seeded local password accounts rather than an external production IAM provider.
 - Approval requires TOTP, but the sandbox TOTP seed is intentionally public for local testing.
 - Development signing keys are deterministic and not KMS-backed.
-- One seeded consumer, merchant, currency, and category are provided.
+- One seeded consumer and merchant are provided; additional sandbox merchants can self-register. NGN and fixed-price digital fulfillment remain the supported boundary.
 - Cancellation, release, refund, payout, and reconciliation state machines remain the next implementation slice.
 
 These limitations prevent accidental presentation of the sandbox as a production payment system.

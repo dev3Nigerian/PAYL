@@ -8,7 +8,7 @@
 
 PAYL will be a two-sided payment and commerce network for consumers and merchants:
 
-> **A consumer gives an AI bounded spending authority. The AI connects directly to a merchant's MCP commerce server, obtains a signed quote, authorizes payment through PAYL, commits the order, and receives a verifiable receipt.**
+> **A consumer gives an AI bounded spending authority. The AI connects once to the PAYL commerce MCP network, discovers registered merchants, obtains merchant-signed quotes, authorizes payment through PAYL, commits merchant-bound orders, and receives verifiable receipts.**
 
 The direction is consumer-and-merchant commerce—not an enterprise-only authorization product.
 
@@ -31,7 +31,7 @@ This starts:
 - PostgreSQL 18 at `localhost:54329`.
 - An isolated, temporary test PostgreSQL instance at `localhost:54330` when `pnpm test` runs.
 
-In another terminal, run the two-server reference consumer agent:
+In another terminal, run the two-connection reference consumer agent:
 
 ```powershell
 pnpm demo
@@ -76,7 +76,7 @@ The consumer dashboard has working navigation for wallet balance, activity, AI p
 
 Policy updates are versioned and enforced by the wallet when `payment.prepare` is called. The auto-approve limit cannot exceed the transaction limit, and the transaction limit cannot exceed the daily limit.
 
-The merchant dashboard supports multiple products under **Products**. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, and can publish or hide it. Published products immediately appear in `commerce.search_offers` through the merchant MCP server.
+The merchant dashboard supports merchant self-registration at `http://localhost:3001/register` and multiple products under **Products**. Registration atomically provisions an isolated merchant identity, NGN payable account, product catalog, signing identity, and merchant-specific MCP endpoint. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, and can publish or hide it. Published products immediately appear in `commerce.search_offers` through that merchant's MCP server.
 
 Merchants do not manually create a paid order. Orders are generated from authorized checkout so the merchant cannot accidentally record an unpaid sale:
 
@@ -89,21 +89,31 @@ Merchants do not manually create a paid order. Orders are generated from authori
 
 ## Connect PAYL to Codex or another MCP client
 
-This repository includes `.codex/config.toml` with two project-scoped Streamable HTTP connections:
+This repository includes `.codex/config.toml` with two project-scoped Streamable HTTP connections that the consumer configures once:
 
 - `payl_wallet` → `http://localhost:4100/mcp/wallet`
-- `payl_merchant` → `http://localhost:4100/mcp/merchants/merchant_demo`
+- `payl_commerce` → `http://localhost:4100/mcp/commerce`
 
 After starting PAYL with `pnpm dev`, trust the repository and restart Codex or open a new Codex task. In Codex, use `/mcp` or **Settings → MCP servers** to connect. PAYL returns protected-resource metadata, Codex opens the consumer login and consent flow, and write-capable tools retain the `writes` approval mode.
 
-To configure another OAuth-capable MCP client, register the same two Streamable HTTP URLs. Clients discover PAYL's OAuth authorization server, dynamically register a client, use authorization code with PKCE, and receive audience-bound bearer tokens for `http://localhost:4100/mcp`.
+To configure another OAuth-capable MCP client, register the same two Streamable HTTP URLs. Clients discover PAYL's OAuth authorization server, dynamically register a client, use authorization code with PKCE, and receive audience-bound bearer tokens for `http://localhost:4100/mcp`. New merchants and products appear through `payl_commerce` automatically; the consumer does not add or authorize another MCP server.
+
+### Test quotes across multiple merchants
+
+1. Connect `payl_wallet` and `payl_commerce` once.
+2. Open `http://localhost:3001/register` and create additional sandbox merchants.
+3. Add at least one product from each merchant's **Products** tab.
+4. Without changing MCP configuration, ask the AI to call `commerce.list_merchants` or `commerce.search_offers` and compare results.
+5. Ask it to call `commerce.create_quote` with each result's `merchantId` and `offerId`, then pay the selected unchanged signed quote through the wallet.
+
+Each quote carries its own merchant ID, signing identity, price, and expiry. Capture resolves the merchant's payable ledger account dynamically, so payments from the same consumer wallet settle independently to the merchant bound into each mandate. Per-merchant `/mcp/merchants/:merchantId` endpoints remain available for advanced direct integrations, but consumers do not need them.
 
 For a remote AI client, ChatGPT plugin, or hosted Codex environment, `localhost` will not work. Deploy the MCP and authorization endpoints behind public HTTPS and replace the sandbox identity store and deterministic keys with production IAM and KMS-backed signing.
 
 ## Implemented transaction slice
 
 ```text
-consumer MCP client -> merchant commerce MCP -> signed quote
+consumer MCP client -> PAYL commerce MCP -> registered merchant -> signed quote
 consumer MCP client -> PAYL wallet MCP -> policy + approval
 PAYL -> signed single-use mandate -> merchant commerce MCP
 merchant -> atomic capture + fulfillment -> signed order receipt
@@ -115,9 +125,10 @@ The local identity provider, seeded passwords, TOTP secret, and deterministic si
 
 ## What “direct AI payment through MCP” means
 
-MCP carries the direct commerce interaction between the consumer's AI host and the merchant's MCP server. It does not itself settle money.
+MCP carries the commerce interaction between the consumer's AI host and PAYL's registered merchant network. It does not itself settle money.
 
-- **Direct interaction:** consumer AI ↔ merchant MCP server.
+- **One-time consumer connection:** consumer AI ↔ PAYL commerce MCP network.
+- **Dynamic merchant routing:** merchant registration and product publication make the merchant discoverable without consumer reconfiguration.
 - **Direct commercial agreement:** signed merchant quote ↔ signed consumer payment mandate.
 - **Money movement:** PAYL's ledger and a licensed bank, mobile-money, issuer, or payment partner.
 - **Merchant settlement:** merchant PAYL balance or payout to the merchant's bank account.

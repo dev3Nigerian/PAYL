@@ -56,25 +56,27 @@ function valueFrom(result: Awaited<ReturnType<Client["callTool"]>>): Record<stri
 }
 
 async function main() {
-  const merchant = new Client({ name: "payl-reference-consumer-agent", version: "0.1.0" });
+  const commerce = new Client({ name: "payl-reference-consumer-agent", version: "0.1.0" });
   const wallet = new Client({ name: "payl-reference-consumer-agent", version: "0.1.0" });
   const oauth = new MemoryOAuthProvider();
-  await connectWithOAuth(merchant, `/mcp/merchants/${merchantId}`, oauth);
+  await connectWithOAuth(commerce, "/mcp/commerce", oauth);
   await wallet.connect(transport("/mcp/wallet", oauth));
 
   try {
-    const offers = valueFrom(await merchant.callTool({ name: "commerce.search_offers", arguments: { query: "research" } }));
-    console.log("1. Merchant offers discovered", offers.offers);
+    const merchants = valueFrom(await commerce.callTool({ name: "commerce.list_merchants", arguments: {} }));
+    console.log("1. Registered merchants discovered through one MCP connection", merchants.merchants);
+    const offers = valueFrom(await commerce.callTool({ name: "commerce.search_offers", arguments: { query: "research" } }));
+    console.log("2. Multi-merchant offers discovered", offers.offers);
 
     const signedQuote = SignedQuoteSchema.parse(
       valueFrom(
-        await merchant.callTool({
+        await commerce.callTool({
           name: "commerce.create_quote",
-          arguments: { offerId: "offer_research_pack", quantity: 1 },
+          arguments: { merchantId, offerId: "offer_research_pack", quantity: 1 },
         }),
       ),
     );
-    console.log("2. Signed quote received", {
+    console.log("3. Merchant-bound signed quote received", {
       quoteId: signedQuote.payload.quoteId,
       totalMinor: signedQuote.payload.totalMinor,
       currency: signedQuote.payload.currency,
@@ -91,12 +93,12 @@ async function main() {
         },
       }),
     );
-    console.log("3. PAYL policy decision", prepared);
+    console.log("4. PAYL policy decision", prepared);
 
     const paymentId = String(prepared.paymentId);
     if (prepared.status === "pending_approval") {
       const approvalId = String(prepared.approvalId);
-      console.log(`4. Human approval required: ${String(prepared.approvalUrl)}`);
+      console.log(`5. Human approval required: ${String(prepared.approvalUrl)}`);
       await waitForHumanApproval(wallet, paymentId);
     }
 
@@ -105,14 +107,14 @@ async function main() {
     );
     if (status.status !== "reserved") throw new Error(`Payment is ${String(status.status)}, not reserved`);
     const mandate = PaymentMandateSchema.parse(status.mandate);
-    console.log("5. Quote-bound single-use mandate issued", {
+    console.log("6. Quote-bound single-use mandate issued", {
       mandateId: mandate.payload.mandateId,
       approvalLevel: mandate.payload.approvalLevel,
       quoteHash: mandate.payload.quoteHash,
     });
 
     const receipt = valueFrom(
-      await merchant.callTool({
+      await commerce.callTool({
         name: "commerce.commit_order",
         arguments: {
           signedQuote,
@@ -121,9 +123,9 @@ async function main() {
         },
       }),
     );
-    console.log("6. Payment captured and signed receipt returned", receipt);
+    console.log("7. Payment routed, captured, and signed receipt returned", receipt);
   } finally {
-    await Promise.all([merchant.close(), wallet.close()]);
+    await Promise.all([commerce.close(), wallet.close()]);
   }
 }
 

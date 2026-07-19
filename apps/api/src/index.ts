@@ -25,6 +25,7 @@ server.listen(config.port, () => {
     {
       port: config.port,
       walletMcp: `http://localhost:${config.port}/mcp/wallet`,
+      commerceMcp: `http://localhost:${config.port}/mcp/commerce`,
       merchantMcp: `http://localhost:${config.port}/mcp/merchants/${config.sandboxMerchantId}`,
     },
     "PAYL sandbox is ready",

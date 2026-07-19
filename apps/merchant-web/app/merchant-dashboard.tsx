@@ -18,6 +18,8 @@ export type MerchantState = {
   merchant: {
     merchantId: string;
     name: string;
+    serverId: string;
+    mcpUrl: string;
     currency: string;
     balances: { payable: string };
     totals: { grossSalesMinor: string; platformFeesMinor: string; netSalesMinor: string; completedOrders: string };
@@ -69,6 +71,7 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
   const [showCreate, setShowCreate] = useState(false);
   const [draft, setDraft] = useState({ name: "", description: "", price: "", fulfillmentMethod: "digital_service" as Offer["fulfillmentMethod"] });
   const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
   const currency = initialState.merchant?.currency ?? "NGN";
 
@@ -116,6 +119,14 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
     window.location.assign("/login");
   }
 
+  async function copyMcpUrl() {
+    const mcpUrl = initialState.merchant?.mcpUrl;
+    if (!mcpUrl) return;
+    await navigator.clipboard.writeText(mcpUrl);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
+
   const headings: Record<Tab, [string, string]> = {
     overview: ["Merchant operations", "Agent commerce overview"],
     orders: ["Paid orders", "Orders created by AI checkout"],
@@ -136,6 +147,7 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
       {tab === "overview" && <>
         <section className="merchant-balance"><div><span>Available for settlement</span><strong>{money(initialState.merchant?.balances.payable, currency)}</strong><small>Net merchant payable balance</small></div><div><span>Gross AI sales</span><strong>{money(initialState.merchant?.totals.grossSalesMinor, currency)}</strong><small>Before PAYL fees</small></div></section>
         <div className="metrics"><article><span>Completed orders</span><strong>{initialState.merchant?.totals.completedOrders ?? "0"}</strong></article><article><span>Active products</span><strong>{offers.filter((offer) => offer.active).length}</strong></article><article><span>Net sales</span><strong>{money(initialState.merchant?.totals.netSalesMinor, currency)}</strong></article><article><span>Ledger integrity</span><strong>{initialState.ledger.unbalanced_entries === "0" ? "Balanced" : "Review"}</strong></article></div>
+        <article className="mcp-card"><div><p className="eyebrow">PAYL commerce network</p><h2>Your catalog is automatically available to connected AI buyers</h2><code>http://localhost:4100/mcp/commerce</code><small>Optional direct endpoint: {initialState.merchant?.mcpUrl ?? "unavailable"} · Merchant ID: {initialState.merchant?.merchantId ?? "unavailable"}</small></div><button className="secondary-button" type="button" onClick={() => void copyMcpUrl()}>{copied ? "Copied" : "Copy direct endpoint"}</button></article>
         <article className="panel"><div className="panelhead"><h2>Latest AI orders</h2><button className="text-button" type="button" onClick={() => setTab("orders")}>View all</button></div><OrderTable state={initialState} /></article>
       </>}
 
