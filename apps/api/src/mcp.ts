@@ -31,7 +31,7 @@ function createWalletServer(service: PaylService, consumerId: string): McpServer
   const server = new McpServer(
     { name: "payl-wallet-payment", version: "0.1.0" },
     {
-      instructions: "PAYL is a sandbox consumer wallet. Use payment.prepare only with the exact merchant-signed quote. Never alter signed fields or approve for the human. If approval is pending, show approvalUrl to the user, then poll payment.get_status. A mandate is single-use and must go only to its bound merchant. Call payment.request_refund only after explicit consumer confirmation; eligible refunds return the full order amount while PAYL retains its fee from the merchant.",
+      instructions: "PAYL is a sandbox consumer wallet. Use payment.prepare only with the exact merchant-signed quote. Never alter signed fields or approve for the human. If approval is pending, show approvalUrl to the user, then poll payment.get_status. A mandate is single-use and must go only to its bound merchant. Cancel unused payment authority with payment.cancel. Call payment.request_refund only after explicit consumer confirmation; eligible refunds return the full order amount while PAYL retains its fee from the merchant.",
     },
   );
 
@@ -106,6 +106,27 @@ function createWalletServer(service: PaylService, consumerId: string): McpServer
   );
 
   server.registerTool(
+    "payment.cancel",
+    {
+      title: "Cancel unused payment authority",
+      description: "Cancels a pending approval or releases reserved funds from an unconsumed mandate.",
+      inputSchema: {
+        paymentId: z.string().min(3).max(128),
+        idempotencyKey: z.string().min(8).max(128),
+        reason: z.string().min(1).max(500).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ paymentId, idempotencyKey, reason }) => {
+      try {
+        return result(await service.cancelPayment({ consumerId, paymentId, idempotencyKey, reason }));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  server.registerTool(
     "payment.request_refund",
     {
       title: "Refund an eligible order",
@@ -129,11 +150,11 @@ function createWalletServer(service: PaylService, consumerId: string): McpServer
   return server;
 }
 
-function createCommerceNetworkServer(service: PaylService): McpServer {
+function createCommerceNetworkServer(service: PaylService, consumerId: string): McpServer {
   const server = new McpServer(
     { name: "payl-commerce-network", version: "0.1.0" },
     {
-      instructions: "PAYL commerce is a multi-merchant sandbox network. Discover registered merchants and compare their active offers through this one connection. Every signed quote remains bound to exactly one merchant. Prepare payment through the wallet, then commit the unchanged quote and single-use mandate here; PAYL routes capture and settlement to the merchant embedded in the signed quote.",
+      instructions: "PAYL commerce is a multi-merchant sandbox network. Discover registered merchants and compare their active offers through this one connection. Every signed quote remains bound to exactly one merchant. Prepare payment through the wallet, then commit the unchanged quote and single-use mandate here. Digital downloads fulfill immediately; digital services remain pending until the merchant fulfills them. A consumer may cancel a pending-fulfillment order with commerce.cancel_order.",
     },
   );
 
@@ -218,8 +239,8 @@ function createCommerceNetworkServer(service: PaylService): McpServer {
   server.registerTool(
     "commerce.commit_order",
     {
-      title: "Commit and fulfill a merchant-bound order",
-      description: "Routes the order to the merchant signed into the quote, captures the matching mandate, and returns a signed receipt.",
+      title: "Commit a merchant-bound order",
+      description: "Routes and captures the matching mandate. Returns current order status; asynchronous services receive a signed receipt after fulfillment.",
       inputSchema: {
         signedQuote: SignedQuoteSchema,
         mandate: PaymentMandateSchema,
@@ -235,6 +256,27 @@ function createCommerceNetworkServer(service: PaylService): McpServer {
           mandate,
           idempotencyKey,
         }));
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "commerce.cancel_order",
+    {
+      title: "Cancel a pending merchant order",
+      description: "Cancels an order before fulfillment and reverses the gross capture, merchant pending revenue, and PAYL fee.",
+      inputSchema: {
+        orderId: z.string().min(3).max(128),
+        idempotencyKey: z.string().min(8).max(128),
+        reason: z.string().min(1).max(500).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ orderId, idempotencyKey, reason }) => {
+      try {
+        return result(await service.cancelOrder({ consumerId, orderId, idempotencyKey, reason }));
       } catch (error) {
         return toolFailure(error);
       }
@@ -389,7 +431,12 @@ export async function handleWalletMcp(service: PaylService, request: Request, re
 }
 
 export async function handleCommerceMcp(service: PaylService, request: Request, response: Response): Promise<void> {
-  await handle(createCommerceNetworkServer(service), request, response);
+  const consumerId = request.auth?.extra?.consumerId;
+  if (typeof consumerId !== "string") {
+    response.status(401).json({ error: "Commerce access requires an authenticated consumer OAuth grant" });
+    return;
+  }
+  await handle(createCommerceNetworkServer(service, consumerId), request, response);
 }
 
 export async function handleMerchantMcp(service: PaylService, request: Request, response: Response): Promise<void> {

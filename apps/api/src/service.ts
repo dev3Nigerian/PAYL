@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import type pg from "pg";
 import {
   MandatePayloadSchema,
   OrderReceiptSchema,
+  OrderStatusSchema,
   PaymentMandateSchema,
   QuotePayloadSchema,
   ReceiptPayloadSchema,
@@ -11,6 +12,7 @@ import {
   SignedQuoteSchema,
   type MandatePayload,
   type OrderReceipt,
+  type OrderStatus,
   type PaymentMandate,
   type PaymentPrepareResult,
   type QuotePayload,
@@ -57,7 +59,7 @@ type PaymentRow = {
   merchant_id: string;
   amount_minor: string;
   currency: string;
-  status: "pending_approval" | "reserved" | "captured" | "refunded" | "declined" | "released" | "expired";
+  status: "pending_approval" | "reserved" | "captured" | "refunded" | "declined" | "released" | "expired" | "cancelled";
   mandate_id: string | null;
   expires_at: Date;
   approval_level: "policy_auto" | "human_mfa" | null;
@@ -88,6 +90,21 @@ function validatedMinorAmount(value: unknown, label: string, allowZero = false):
     throw new DomainError("INVALID_AMOUNT", `${label} must be ${allowZero ? "zero or greater" : "greater than zero"}`);
   }
   return amount;
+}
+
+function validatedIdempotencyKey(value: unknown, operation: string): string {
+  const key = typeof value === "string" ? value.trim() : "";
+  if (key.length < 8 || key.length > 128) {
+    throw new DomainError("INVALID_IDEMPOTENCY_KEY", `${operation} idempotency key must contain 8 to 128 characters`);
+  }
+  return key;
+}
+
+function validatedReason(value: unknown, operation: string): string | undefined {
+  const reason = typeof value === "string" ? value.trim() : "";
+  if (!reason) return undefined;
+  if (reason.length > 500) throw new DomainError("INVALID_REASON", `${operation} reason cannot exceed 500 characters`);
+  return reason;
 }
 
 const LEGACY_REFUND_WINDOW_MINUTES = 7 * 24 * 60;
@@ -172,6 +189,8 @@ export class PaylService {
         ["acct_consumer_available", "consumer", this.config.sandboxConsumerId, "available", "NGN"],
         ["acct_consumer_reserved", "consumer", this.config.sandboxConsumerId, "reserved", "NGN"],
         ["acct_merchant_payable", "merchant", this.config.sandboxMerchantId, "payable", "NGN"],
+        [`acct_${this.config.sandboxMerchantId}_pending_payable`, "merchant", this.config.sandboxMerchantId, "pending_payable", "NGN"],
+        [`acct_${this.config.sandboxMerchantId}_reserve`, "merchant", this.config.sandboxMerchantId, "reserve", "NGN"],
         ["acct_platform_clearing", "platform", "payl", "clearing", "NGN"],
         ["acct_platform_fee", "platform", "payl", "fee_revenue", "NGN"],
       ] as const;
@@ -183,6 +202,11 @@ export class PaylService {
           [...account],
         );
       }
+
+      await client.query(
+        "INSERT INTO merchant_settlement_configs(merchant_id) VALUES ($1) ON CONFLICT (merchant_id) DO NOTHING",
+        [this.config.sandboxMerchantId],
+      );
 
       await this.postJournal(client, {
         eventType: "sandbox_funding",
@@ -668,7 +692,7 @@ export class PaylService {
       const capturedToday = asBigInt(
         (await client.query<{ total: string }>(
           `SELECT COALESCE(sum(amount_minor), 0)::text AS total FROM payment_intents
-           WHERE consumer_id = $1 AND status = 'captured' AND created_at >= date_trunc('day', now())`,
+           WHERE consumer_id = $1 AND status IN ('captured', 'refunded') AND created_at >= date_trunc('day', now())`,
           [input.consumerId],
         )).rows[0]?.total ?? "0",
       );
@@ -866,7 +890,8 @@ export class PaylService {
     signedQuote: SignedQuote;
     mandate: PaymentMandate;
     idempotencyKey: string;
-  }): Promise<OrderReceipt> {
+  }): Promise<OrderStatus> {
+    const idempotencyKey = validatedIdempotencyKey(input.idempotencyKey, "Order commit");
     const signedQuote = SignedQuoteSchema.parse(input.signedQuote);
     const mandate = PaymentMandateSchema.parse(input.mandate);
     await verifyPayload(signedQuote.jws, signedQuote.payload, this.merchantKey(input.merchantId).publicKey);
@@ -892,11 +917,11 @@ export class PaylService {
         "MANDATE_NOT_FOUND",
         "Payment mandate was not found",
       );
-      const duplicate = (await client.query<{ receipt_payload: unknown; receipt_jws: string }>(
-        "SELECT receipt_payload, receipt_jws FROM orders WHERE mandate_id = $1",
+      const duplicate = (await client.query<{ id: string }>(
+        "SELECT id FROM orders WHERE mandate_id = $1",
         [storedMandate.id],
       )).rows[0];
-      if (duplicate) return OrderReceiptSchema.parse({ payload: duplicate.receipt_payload, jws: duplicate.receipt_jws });
+      if (duplicate) return this.loadOrderStatus(client, duplicate.id, input.merchantId);
 
       if (storedMandate.jws !== mandate.jws) throw new DomainError("MANDATE_TAMPERED", "Mandate does not match the PAYL record");
       if (storedMandate.status !== "reserved") throw new DomainError("MANDATE_ALREADY_USED", "Mandate is not available for capture");
@@ -927,14 +952,11 @@ export class PaylService {
       const fee = (amount * 200n) / 10_000n;
       const merchantNet = amount - fee;
       const orderId = newId("order");
-      const fulfillmentReference = newId("fulfillment");
       const orderCreatedAt = new Date();
+      const fulfillmentDeadline = new Date(orderCreatedAt.getTime() + this.config.sandboxFulfillmentTtlMinutes * 60_000);
       const refundPolicy = signedQuote.payload.schemaVersion === "2026-07-19"
         ? signedQuote.payload.refundPolicy
         : { refundable: true as const, refundWindowMinutes: LEGACY_REFUND_WINDOW_MINUTES };
-      const refundEligibleUntil = refundPolicy.refundable
-        ? new Date(orderCreatedAt.getTime() + refundPolicy.refundWindowMinutes * 60_000)
-        : null;
       const payment = requireValue(
         (await client.query<PaymentRow>("SELECT * FROM payment_intents WHERE id = $1 FOR UPDATE", [storedMandate.payment_id])).rows[0],
         "PAYMENT_NOT_FOUND",
@@ -946,13 +968,13 @@ export class PaylService {
         id: string;
         owner_type: "consumer" | "merchant" | "platform";
         owner_id: string;
-        account_type: "reserved" | "payable" | "fee_revenue";
+        account_type: "reserved" | "pending_payable" | "fee_revenue";
       }>(
         `SELECT id, owner_type, owner_id, account_type
          FROM ledger_accounts
          WHERE currency = $1 AND (
            (owner_type = 'consumer' AND owner_id = $2 AND account_type = 'reserved') OR
-           (owner_type = 'merchant' AND owner_id = $3 AND account_type = 'payable') OR
+           (owner_type = 'merchant' AND owner_id = $3 AND account_type = 'pending_payable') OR
            (owner_type = 'platform' AND owner_id = 'payl' AND account_type = 'fee_revenue')
          )
          ORDER BY id FOR UPDATE`,
@@ -971,35 +993,17 @@ export class PaylService {
         referenceId: orderId,
         lines: [
           { accountId: accountId("consumer", "reserved"), amountMinor: -amount },
-          { accountId: accountId("merchant", "payable"), amountMinor: merchantNet },
+          { accountId: accountId("merchant", "pending_payable"), amountMinor: merchantNet },
           { accountId: accountId("platform", "fee_revenue"), amountMinor: fee },
         ].filter((line) => line.amountMinor !== 0n),
       });
 
-      const receiptPayload = ReceiptPayloadSchema.parse({
-        schemaVersion: "2026-07-19",
-        merchantId: input.merchantId,
-        orderId,
-        quoteId: storedMandate.quote_id,
-        mandateId: storedMandate.id,
-        paymentId: payment.id,
-        capturedAmountMinor: amount.toString(),
-        currency: storedMandate.currency,
-        fulfillmentStatus: "fulfilled",
-        fulfillmentReference,
-        refundable: refundPolicy.refundable,
-        refundEligibleUntil: refundEligibleUntil?.toISOString() ?? null,
-        createdAt: orderCreatedAt.toISOString(),
-      });
-      const receiptJws = await signPayload(receiptPayload, this.merchantKey(input.merchantId));
-      const receipt = OrderReceiptSchema.parse({ payload: receiptPayload, jws: receiptJws });
-
       await client.query(
         `INSERT INTO orders(
            id, merchant_id, quote_id, mandate_id, payment_id, status, captured_amount_minor,
-           platform_fee_minor, currency, fulfillment_reference, refundable, refund_eligible_until,
-           receipt_payload, receipt_jws, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, 'fulfilled', $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $14)`,
+           platform_fee_minor, currency, fulfillment_reference, refundable, refund_window_minutes, refund_eligible_until,
+           receipt_payload, receipt_jws, fulfillment_deadline, created_at, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, 'confirmed', $6, $7, $8, NULL, $9, $10, NULL, NULL, NULL, $11, $12, $12)`,
         [
           orderId,
           input.merchantId,
@@ -1009,35 +1013,569 @@ export class PaylService {
           amount.toString(),
           fee.toString(),
           storedMandate.currency,
-          fulfillmentReference,
           refundPolicy.refundable,
-          refundEligibleUntil,
-          JSON.stringify(receiptPayload),
-          receiptJws,
+          refundPolicy.refundable ? refundPolicy.refundWindowMinutes : null,
+          fulfillmentDeadline,
           orderCreatedAt,
         ],
       );
       await client.query("UPDATE payment_mandates SET status = 'consumed', consumed_at = now() WHERE id = $1", [storedMandate.id]);
       await client.query("UPDATE payment_intents SET status = 'captured', updated_at = now() WHERE id = $1", [payment.id]);
       await client.query("UPDATE quotes SET status = 'committed' WHERE id = $1", [storedMandate.quote_id]);
-      await this.audit(client, payment.id, "merchant", input.merchantId, "order.fulfilled", "order", orderId, {
-        idempotencyKey: input.idempotencyKey,
+      await this.audit(client, payment.id, "merchant", input.merchantId, "order.confirmed", "order", orderId, {
+        idempotencyKey,
         capturedAmountMinor: amount.toString(),
+        fulfillmentDeadline: fulfillmentDeadline.toISOString(),
       });
-      return receipt;
+      await this.enqueueOutbox(client, input.merchantId, "merchant.order_created", "order", orderId, {
+        orderId,
+        merchantId: input.merchantId,
+        quoteId: storedMandate.quote_id,
+        capturedAmountMinor: amount.toString(),
+        currency: storedMandate.currency,
+        fulfillmentDeadline: fulfillmentDeadline.toISOString(),
+      }, `order-created:${orderId}`);
+
+      if (signedQuote.payload.fulfillmentMethod === "digital_download") {
+        await this.fulfillOrderLocked(client, {
+          merchantId: input.merchantId,
+          orderId,
+          fulfillmentReference: newId("fulfillment"),
+          idempotencyKey: `automatic:${orderId}`,
+          actorType: "system",
+        });
+      }
+      return this.loadOrderStatus(client, orderId, input.merchantId);
     });
   }
 
-  async getOrder(merchantId: string, orderId: string): Promise<OrderReceipt> {
+  async getOrder(merchantId: string, orderId: string): Promise<OrderStatus> {
+    return this.loadOrderStatus(this.pool, orderId, merchantId);
+  }
+
+  async fulfillOrder(input: {
+    merchantId: string;
+    orderId: string;
+    fulfillmentReference: string;
+    idempotencyKey: string;
+  }): Promise<OrderStatus> {
+    const idempotencyKey = validatedIdempotencyKey(input.idempotencyKey, "Fulfillment");
+    const fulfillmentReference = typeof input.fulfillmentReference === "string" ? input.fulfillmentReference.trim() : "";
+    if (!/^[a-zA-Z0-9_-]{3,128}$/.test(fulfillmentReference)) {
+      throw new DomainError("INVALID_FULFILLMENT_REFERENCE", "Fulfillment reference must contain 3 to 128 letters, numbers, hyphens, or underscores");
+    }
+    return inTransaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`fulfill:${input.orderId}`]);
+      await this.fulfillOrderLocked(client, {
+        merchantId: input.merchantId,
+        orderId: input.orderId,
+        fulfillmentReference,
+        idempotencyKey,
+        actorType: "merchant",
+      });
+      return this.loadOrderStatus(client, input.orderId, input.merchantId);
+    });
+  }
+
+  async cancelPayment(input: {
+    consumerId: string;
+    paymentId: string;
+    idempotencyKey: string;
+    reason?: string;
+  }): Promise<Record<string, unknown>> {
+    const idempotencyKey = validatedIdempotencyKey(input.idempotencyKey, "Payment cancellation");
+    const reason = validatedReason(input.reason, "Cancellation");
+    return inTransaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`${input.consumerId}:${idempotencyKey}`]);
+      const byKey = (await client.query<{ payment_id: string; status: string; released_amount_minor: string; created_at: Date }>(
+        `SELECT payment_id, status, released_amount_minor::text, created_at
+         FROM payment_cancellations WHERE consumer_id = $1 AND idempotency_key = $2`,
+        [input.consumerId, idempotencyKey],
+      )).rows[0];
+      if (byKey) {
+        if (byKey.payment_id !== input.paymentId) throw new DomainError("IDEMPOTENCY_CONFLICT", "Cancellation key was used for another payment", 409);
+        return {
+          paymentId: byKey.payment_id,
+          status: byKey.status,
+          releasedAmountMinor: byKey.released_amount_minor,
+          createdAt: byKey.created_at.toISOString(),
+        };
+      }
+      const payment = requireValue(
+        (await client.query<PaymentRow>("SELECT * FROM payment_intents WHERE id = $1 FOR UPDATE", [input.paymentId])).rows[0],
+        "PAYMENT_NOT_FOUND",
+        "Payment was not found",
+      );
+      if (payment.consumer_id !== input.consumerId) throw new DomainError("PAYMENT_FORBIDDEN", "Payment belongs to another consumer", 403);
+      const existing = (await client.query<{ status: string; released_amount_minor: string; created_at: Date }>(
+        "SELECT status, released_amount_minor::text, created_at FROM payment_cancellations WHERE payment_id = $1",
+        [payment.id],
+      )).rows[0];
+      if (existing) return { paymentId: payment.id, status: existing.status, releasedAmountMinor: existing.released_amount_minor, createdAt: existing.created_at.toISOString() };
+      if (payment.status !== "pending_approval" && payment.status !== "reserved") {
+        throw new DomainError("PAYMENT_NOT_CANCELLABLE", `A payment in ${payment.status} status cannot be cancelled`, 409);
+      }
+      const releasedAmount = payment.status === "reserved" ? asBigInt(payment.amount_minor) : 0n;
+      if (payment.status === "reserved") {
+        await this.releaseReservationLocked(client, payment, "released");
+        await client.query("UPDATE payment_intents SET status = 'cancelled', updated_at = now() WHERE id = $1", [payment.id]);
+      } else {
+        await client.query("UPDATE approval_challenges SET status = 'declined', decided_at = now() WHERE payment_id = $1 AND status = 'pending'", [payment.id]);
+        await client.query("UPDATE payment_intents SET status = 'cancelled', updated_at = now() WHERE id = $1", [payment.id]);
+      }
+      await client.query("UPDATE quotes SET status = 'cancelled' WHERE id = $1 AND status = 'active'", [payment.quote_id]);
+      const cancellationId = newId("payment_cancel");
+      const createdAt = new Date();
+      await client.query(
+        `INSERT INTO payment_cancellations(
+           id, payment_id, consumer_id, reason, idempotency_key, released_amount_minor, status, created_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'cancelled', $7)`,
+        [cancellationId, payment.id, input.consumerId, reason ?? null, idempotencyKey, releasedAmount.toString(), createdAt],
+      );
+      await this.audit(client, payment.id, "consumer", input.consumerId, "payment.cancelled", "payment", payment.id, {
+        releasedAmountMinor: releasedAmount.toString(),
+        ...(reason ? { reason } : {}),
+      });
+      await this.enqueueOutbox(client, payment.merchant_id, "payment.cancelled", "payment", payment.id, {
+        paymentId: payment.id,
+        merchantId: payment.merchant_id,
+        releasedAmountMinor: releasedAmount.toString(),
+        currency: payment.currency,
+      }, `payment-cancelled:${payment.id}`);
+      return { paymentId: payment.id, status: "cancelled", releasedAmountMinor: releasedAmount.toString(), createdAt: createdAt.toISOString() };
+    });
+  }
+
+  async cancelOrder(input: {
+    consumerId: string;
+    orderId: string;
+    idempotencyKey: string;
+    reason?: string;
+  }): Promise<OrderStatus> {
+    const idempotencyKey = validatedIdempotencyKey(input.idempotencyKey, "Order cancellation");
+    const reason = validatedReason(input.reason, "Cancellation");
+    return inTransaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`${input.consumerId}:${idempotencyKey}`]);
+      const byKey = (await client.query<{ order_id: string }>(
+        "SELECT order_id FROM order_cancellations WHERE consumer_id = $1 AND idempotency_key = $2",
+        [input.consumerId, idempotencyKey],
+      )).rows[0];
+      if (byKey && byKey.order_id !== input.orderId) throw new DomainError("IDEMPOTENCY_CONFLICT", "Cancellation key was used for another order", 409);
+      const consumer = requireValue(
+        (await client.query<{ consumer_id: string }>(
+          `SELECT p.consumer_id FROM orders o JOIN payment_intents p ON p.id = o.payment_id WHERE o.id = $1`,
+          [input.orderId],
+        )).rows[0],
+        "ORDER_NOT_FOUND",
+        "Order was not found",
+      );
+      if (consumer.consumer_id !== input.consumerId) throw new DomainError("ORDER_FORBIDDEN", "Order belongs to another consumer", 403);
+      await this.cancelOrderLocked(client, {
+        orderId: input.orderId,
+        consumerId: input.consumerId,
+        idempotencyKey,
+        reason: reason ?? "Consumer cancelled before fulfillment",
+        actorType: "consumer",
+      });
+      return this.loadOrderStatus(client, input.orderId);
+    });
+  }
+
+  async processExpirations(limit = 100): Promise<Record<string, number>> {
+    const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
+    return inTransaction(this.pool, async (client) => {
+      const counts = { paymentsExpired: 0, reservationsReleased: 0, ordersCancelled: 0, quotesExpired: 0 };
+      const payments = await client.query<PaymentRow>(
+        `SELECT * FROM payment_intents
+         WHERE status IN ('pending_approval', 'reserved') AND expires_at <= now()
+         ORDER BY expires_at FOR UPDATE SKIP LOCKED LIMIT $1`,
+        [boundedLimit],
+      );
+      for (const payment of payments.rows) {
+        if (payment.status === "reserved") {
+          await this.releaseReservationLocked(client, payment, "expired");
+          counts.reservationsReleased += 1;
+        } else {
+          await client.query("UPDATE payment_intents SET status = 'expired', updated_at = now() WHERE id = $1", [payment.id]);
+        }
+        await client.query("UPDATE approval_challenges SET status = 'expired', decided_at = now() WHERE payment_id = $1 AND status = 'pending'", [payment.id]);
+        await client.query("UPDATE quotes SET status = 'expired' WHERE id = $1 AND status = 'active' AND expires_at <= now()", [payment.quote_id]);
+        await client.query(
+          `INSERT INTO payment_cancellations(
+             id, payment_id, consumer_id, reason, idempotency_key, released_amount_minor, status
+           ) VALUES ($1, $2, $3, 'Payment authority expired', $4, $5, 'expired')
+           ON CONFLICT (payment_id) DO NOTHING`,
+          [newId("payment_expiry"), payment.id, payment.consumer_id, `expiry:${payment.id}`, payment.status === "reserved" ? payment.amount_minor : "0"],
+        );
+        await this.audit(client, payment.id, "system", "lifecycle_worker", "payment.expired", "payment", payment.id, {
+          releasedAmountMinor: payment.status === "reserved" ? payment.amount_minor : "0",
+        });
+        counts.paymentsExpired += 1;
+      }
+
+      const orders = await client.query<{ id: string; consumer_id: string }>(
+        `SELECT o.id, p.consumer_id FROM orders o
+         JOIN payment_intents p ON p.id = o.payment_id
+         WHERE o.status IN ('confirmed', 'fulfillment_failed') AND o.fulfillment_deadline <= now()
+         ORDER BY o.fulfillment_deadline FOR UPDATE OF o SKIP LOCKED LIMIT $1`,
+        [boundedLimit],
+      );
+      for (const order of orders.rows) {
+        await this.cancelOrderLocked(client, {
+          orderId: order.id,
+          consumerId: order.consumer_id,
+          idempotencyKey: `fulfillment-timeout:${order.id}`,
+          reason: "Merchant fulfillment deadline expired",
+          actorType: "system",
+        });
+        counts.ordersCancelled += 1;
+      }
+
+      const expiredQuotes = await client.query(
+        "UPDATE quotes SET status = 'expired' WHERE status = 'active' AND expires_at <= now() RETURNING id",
+      );
+      counts.quotesExpired = expiredQuotes.rowCount ?? 0;
+      return counts;
+    });
+  }
+
+  async configureMerchantWebhook(input: { merchantId: string; url: unknown }): Promise<Record<string, unknown>> {
+    if (typeof input.url !== "string") throw new DomainError("INVALID_WEBHOOK_URL", "Webhook URL is required");
+    let url: URL;
+    try {
+      url = new URL(input.url.trim());
+    } catch {
+      throw new DomainError("INVALID_WEBHOOK_URL", "Webhook URL is invalid");
+    }
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if (url.username || url.password || (url.protocol !== "https:" && !(this.config.nodeEnv !== "production" && loopback && url.protocol === "http:"))) {
+      throw new DomainError("INVALID_WEBHOOK_URL", "Webhook URL must use HTTPS; development additionally permits HTTP loopback URLs");
+    }
+    const webhookId = newId("webhook");
+    const secret = randomBytes(32).toString("base64url");
     const row = requireValue(
-      (await this.pool.query<{ receipt_payload: unknown; receipt_jws: string }>(
-        "SELECT receipt_payload, receipt_jws FROM orders WHERE id = $1 AND merchant_id = $2",
-        [orderId, merchantId],
+      (await this.pool.query<{ id: string; url: string; active: boolean; updated_at: Date }>(
+        `INSERT INTO merchant_webhook_endpoints(id, merchant_id, url, signing_secret, active)
+         VALUES ($1, $2, $3, $4, true)
+         ON CONFLICT (merchant_id) DO UPDATE
+         SET url = excluded.url, signing_secret = excluded.signing_secret, active = true, updated_at = now()
+         RETURNING id, url, active, updated_at`,
+        [webhookId, input.merchantId, url.href, secret],
       )).rows[0],
-      "ORDER_NOT_FOUND",
-      "Order was not found",
+      "MERCHANT_NOT_FOUND",
+      "Merchant was not found",
     );
-    return OrderReceiptSchema.parse({ payload: row.receipt_payload, jws: row.receipt_jws });
+    await this.audit(this.pool, row.id, "merchant", input.merchantId, "webhook.configured", "webhook", row.id, { url: row.url });
+    return { webhookId: row.id, url: row.url, active: row.active, signingSecret: secret, updatedAt: row.updated_at.toISOString() };
+  }
+
+  async disableMerchantWebhook(merchantId: string): Promise<void> {
+    const result = await this.pool.query(
+      "UPDATE merchant_webhook_endpoints SET active = false, updated_at = now() WHERE merchant_id = $1 AND active = true",
+      [merchantId],
+    );
+    if (!result.rowCount) throw new DomainError("WEBHOOK_NOT_FOUND", "Active merchant webhook was not found", 404);
+    await this.audit(this.pool, merchantId, "merchant", merchantId, "webhook.disabled", "merchant", merchantId, {});
+  }
+
+  async processOutbox(limit = 25): Promise<Record<string, number>> {
+    const counts = { delivered: 0, retried: 0, dead: 0 };
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    for (let index = 0; index < boundedLimit; index += 1) {
+      const event = await inTransaction(this.pool, async (client) => {
+        const row = (await client.query<{
+          id: string;
+          event_type: string;
+          payload: unknown;
+          attempts: number;
+          endpoint_id: string | null;
+          url: string | null;
+          signing_secret: string | null;
+          endpoint_active: boolean | null;
+        }>(
+          `SELECT e.id, e.event_type, e.payload, e.attempts, e.endpoint_id,
+                  w.url, w.signing_secret, w.active AS endpoint_active
+           FROM outbox_events e
+           LEFT JOIN merchant_webhook_endpoints w ON w.id = e.endpoint_id
+           WHERE (e.status = 'pending' OR (e.status = 'processing' AND e.locked_at < now() - interval '5 minutes'))
+             AND e.available_at <= now()
+           ORDER BY e.created_at
+           FOR UPDATE OF e SKIP LOCKED LIMIT 1`,
+        )).rows[0];
+        if (!row) return null;
+        await client.query(
+          "UPDATE outbox_events SET status = 'processing', attempts = attempts + 1, locked_at = now(), last_error = NULL WHERE id = $1",
+          [row.id],
+        );
+        return { ...row, attempts: row.attempts + 1 };
+      });
+      if (!event) break;
+
+      if (!event.endpoint_id || !event.url || !event.signing_secret || !event.endpoint_active) {
+        await this.pool.query(
+          "UPDATE outbox_events SET status = 'delivered', delivered_at = now(), last_error = $2 WHERE id = $1",
+          [event.id, "No active merchant endpoint; retained as a delivered sandbox event"],
+        );
+        counts.delivered += 1;
+        continue;
+      }
+
+      const body = JSON.stringify({ id: event.id, type: event.event_type, data: event.payload });
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const signature = `v1=${createHmac("sha256", event.signing_secret).update(`${timestamp}.${body}`).digest("hex")}`;
+      try {
+        const response = await fetch(event.url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "user-agent": "PAYL-Sandbox-Webhook/1.0",
+            "x-payl-event-id": event.id,
+            "x-payl-timestamp": timestamp,
+            "x-payl-signature": signature,
+          },
+          body,
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (!response.ok) throw new Error(`Webhook returned HTTP ${response.status}`);
+        await this.pool.query("UPDATE outbox_events SET status = 'delivered', delivered_at = now() WHERE id = $1", [event.id]);
+        counts.delivered += 1;
+      } catch (error) {
+        const dead = event.attempts >= 8;
+        const delaySeconds = Math.min(300, 2 ** Math.min(event.attempts, 8));
+        await this.pool.query(
+          `UPDATE outbox_events
+           SET status = $2, available_at = now() + make_interval(secs => $3), last_error = $4
+           WHERE id = $1`,
+          [event.id, dead ? "dead" : "pending", delaySeconds, error instanceof Error ? error.message.slice(0, 1000) : "Webhook delivery failed"],
+        );
+        if (dead) counts.dead += 1;
+        else counts.retried += 1;
+      }
+    }
+    return counts;
+  }
+
+  async createPayout(input: { merchantId: string; idempotencyKey: string }): Promise<Record<string, unknown>> {
+    const idempotencyKey = validatedIdempotencyKey(input.idempotencyKey, "Payout");
+    return inTransaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`payout:${input.merchantId}:${idempotencyKey}`]);
+      const existing = (await client.query<{
+        id: string; currency: string; source_payable_minor: string; reserve_held_minor: string; paid_amount_minor: string; status: string; created_at: Date;
+      }>("SELECT * FROM payout_batches WHERE merchant_id = $1 AND idempotency_key = $2", [input.merchantId, idempotencyKey])).rows[0];
+      if (existing) return this.payoutResult(existing);
+
+      const config = requireValue(
+        (await client.query<{ reserve_bps: number; payouts_enabled: boolean; currency: string }>(
+          `SELECT s.reserve_bps, s.payouts_enabled, m.currency
+           FROM merchant_settlement_configs s JOIN merchants m ON m.id = s.merchant_id
+           WHERE s.merchant_id = $1 FOR UPDATE OF s`,
+          [input.merchantId],
+        )).rows[0],
+        "SETTLEMENT_NOT_CONFIGURED",
+        "Merchant settlement is not configured",
+      );
+      if (!config.payouts_enabled) throw new DomainError("PAYOUTS_DISABLED", "Merchant payouts are disabled", 409);
+      const accounts = await client.query<{ id: string; owner_type: string; account_type: string }>(
+        `SELECT id, owner_type, account_type FROM ledger_accounts
+         WHERE currency = $1 AND (
+           (owner_type = 'merchant' AND owner_id = $2 AND account_type IN ('payable', 'reserve')) OR
+           (owner_type = 'platform' AND owner_id = 'payl' AND account_type = 'clearing')
+         ) ORDER BY id FOR UPDATE`,
+        [config.currency, input.merchantId],
+      );
+      const accountId = (ownerType: string, accountType: string) => requireValue(
+        accounts.rows.find((account) => account.owner_type === ownerType && account.account_type === accountType)?.id,
+        "SETTLEMENT_ACCOUNT_MISSING",
+        `${ownerType} ${accountType} account is missing`,
+      );
+      const payableId = accountId("merchant", "payable");
+      const payable = await this.accountBalance(client, payableId);
+      if (payable <= 0n) throw new DomainError("NO_PAYABLE_FUNDS", "Merchant has no positive payable balance", 409);
+      const reserveHeld = (payable * BigInt(config.reserve_bps)) / 10_000n;
+      const paid = payable - reserveHeld;
+      const payoutId = newId("payout");
+      await this.postJournal(client, {
+        eventType: "merchant_payout",
+        idempotencyKey: `payout:${input.merchantId}:${idempotencyKey}`,
+        referenceType: "payout",
+        referenceId: payoutId,
+        lines: [
+          { accountId: payableId, amountMinor: -payable },
+          { accountId: accountId("merchant", "reserve"), amountMinor: reserveHeld },
+          { accountId: accountId("platform", "clearing"), amountMinor: paid },
+        ].filter((line) => line.amountMinor !== 0n),
+      });
+      const createdAt = new Date();
+      const row = requireValue(
+        (await client.query<{
+          id: string; currency: string; source_payable_minor: string; reserve_held_minor: string; paid_amount_minor: string; status: string; created_at: Date;
+        }>(
+          `INSERT INTO payout_batches(
+             id, merchant_id, currency, source_payable_minor, reserve_held_minor, paid_amount_minor,
+             status, idempotency_key, created_at, completed_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, 'paid', $7, $8, $8)
+           RETURNING *`,
+          [payoutId, input.merchantId, config.currency, payable.toString(), reserveHeld.toString(), paid.toString(), idempotencyKey, createdAt],
+        )).rows[0],
+        "PAYOUT_FAILED",
+        "Payout record could not be created",
+      );
+      await this.audit(client, payoutId, "merchant", input.merchantId, "payout.paid", "payout", payoutId, {
+        paidAmountMinor: paid.toString(), reserveHeldMinor: reserveHeld.toString(), currency: config.currency,
+      });
+      await this.enqueueOutbox(client, input.merchantId, "payout.paid", "payout", payoutId, this.payoutResult(row), `payout-paid:${payoutId}`);
+      return this.payoutResult(row);
+    });
+  }
+
+  async reconciliationReport(merchantId: string, persist = false): Promise<Record<string, unknown>> {
+    const queryable = this.pool;
+    const [movement, accounts, journal] = await Promise.all([
+      queryable.query<{
+        captures: string; cancelled_net: string; refunds: string; payouts: string;
+      }>(
+        `SELECT
+           COALESCE((SELECT sum(captured_amount_minor - platform_fee_minor) FROM orders WHERE merchant_id = $1), 0)::text AS captures,
+           COALESCE((SELECT sum(captured_amount_minor - platform_fee_minor) FROM orders WHERE merchant_id = $1 AND status = 'cancelled'), 0)::text AS cancelled_net,
+           COALESCE((SELECT sum(refunded_amount_minor) FROM refunds WHERE merchant_id = $1), 0)::text AS refunds,
+           COALESCE((SELECT sum(paid_amount_minor) FROM payout_batches WHERE merchant_id = $1 AND status = 'paid'), 0)::text AS payouts`,
+        [merchantId],
+      ),
+      queryable.query<{ currency: string; account_type: string; balance: string }>(
+        `SELECT a.currency, a.account_type, COALESCE(sum(l.amount_minor), 0)::text AS balance
+         FROM ledger_accounts a LEFT JOIN journal_lines l ON l.account_id = a.id
+         WHERE a.owner_type = 'merchant' AND a.owner_id = $1
+           AND a.account_type IN ('pending_payable', 'payable', 'reserve')
+         GROUP BY a.id, a.currency, a.account_type ORDER BY a.account_type`,
+        [merchantId],
+      ),
+      queryable.query<{ unbalanced: string }>(
+        `SELECT count(*) FILTER (WHERE balance <> 0)::text AS unbalanced
+         FROM (SELECT e.id, COALESCE(sum(l.amount_minor), 0) AS balance
+               FROM journal_entries e JOIN journal_lines l ON l.entry_id = e.id GROUP BY e.id) j`,
+      ),
+    ]);
+    const row = requireValue(movement.rows[0], "RECONCILIATION_FAILED", "Settlement movements could not be loaded");
+    const balances = Object.fromEntries(accounts.rows.map((account) => [account.account_type, account.balance]));
+    const expected = asBigInt(row.captures) - asBigInt(row.cancelled_net) - asBigInt(row.refunds) - asBigInt(row.payouts);
+    const actual = accounts.rows.reduce((sum, account) => sum + asBigInt(account.balance), 0n);
+    const currency = accounts.rows[0]?.currency ?? "NGN";
+    const report = {
+      merchantId,
+      currency,
+      generatedAt: iso(),
+      movements: {
+        capturedNetMinor: row.captures,
+        cancelledNetMinor: row.cancelled_net,
+        refundedGrossMinor: row.refunds,
+        paidOutMinor: row.payouts,
+      },
+      balances,
+      expectedPositionMinor: expected.toString(),
+      actualPositionMinor: actual.toString(),
+      differenceMinor: (actual - expected).toString(),
+      unbalancedJournalEntries: journal.rows[0]?.unbalanced ?? "0",
+      reconciled: actual === expected && (journal.rows[0]?.unbalanced ?? "0") === "0",
+    };
+    if (persist) {
+      await this.pool.query(
+        `INSERT INTO reconciliation_reports(
+           id, merchant_id, currency, expected_position_minor, actual_position_minor,
+           difference_minor, unbalanced_journal_entries, payload
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+        [newId("reconciliation"), merchantId, currency, expected.toString(), actual.toString(), (actual - expected).toString(), journal.rows[0]?.unbalanced ?? "0", JSON.stringify(report)],
+      );
+    }
+    return report;
+  }
+
+  async pilotMetrics(merchantId: string): Promise<Record<string, unknown>> {
+    const [funnel, approvals, fulfillment, operations] = await Promise.all([
+      this.pool.query<{
+        quotes: string; orders: string; fulfilled: string; cancelled: string; refunded: string;
+      }>(
+        `SELECT
+           (SELECT count(*) FROM quotes WHERE merchant_id = $1)::text AS quotes,
+           count(*)::text AS orders,
+           count(*) FILTER (WHERE status IN ('fulfilled', 'refunded'))::text AS fulfilled,
+           count(*) FILTER (WHERE status = 'cancelled')::text AS cancelled,
+           count(*) FILTER (WHERE status = 'refunded')::text AS refunded
+         FROM orders WHERE merchant_id = $1`,
+        [merchantId],
+      ),
+      this.pool.query<{ requested: string; completed: string; median_seconds: string | null }>(
+        `SELECT count(*)::text AS requested,
+                count(*) FILTER (WHERE a.decided_at IS NOT NULL)::text AS completed,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM (a.decided_at - a.created_at)))
+                  FILTER (WHERE a.decided_at IS NOT NULL)::text AS median_seconds
+         FROM approval_challenges a JOIN payment_intents p ON p.id = a.payment_id
+         WHERE p.merchant_id = $1`,
+        [merchantId],
+      ),
+      this.pool.query<{ average_seconds: string | null; pending: string; failed: string }>(
+        `SELECT avg(extract(epoch FROM (fulfilled_at - created_at)))
+                  FILTER (WHERE fulfilled_at IS NOT NULL)::text AS average_seconds,
+                count(*) FILTER (WHERE status = 'confirmed')::text AS pending,
+                count(*) FILTER (WHERE status = 'fulfillment_failed')::text AS failed
+         FROM orders WHERE merchant_id = $1`,
+        [merchantId],
+      ),
+      this.pool.query<{ pending_webhooks: string; dead_webhooks: string; payouts: string; audit_coverage: string }>(
+        `SELECT
+           (SELECT count(*) FROM outbox_events WHERE merchant_id = $1 AND status IN ('pending', 'processing'))::text AS pending_webhooks,
+           (SELECT count(*) FROM outbox_events WHERE merchant_id = $1 AND status = 'dead')::text AS dead_webhooks,
+           (SELECT count(*) FROM payout_batches WHERE merchant_id = $1 AND status = 'paid')::text AS payouts,
+           (SELECT count(*) FROM orders o WHERE o.merchant_id = $1 AND EXISTS (
+              SELECT 1 FROM audit_events a WHERE a.object_type = 'order' AND a.object_id = o.id
+            ))::text AS audit_coverage`,
+        [merchantId],
+      ),
+    ]);
+    const f = requireValue(funnel.rows[0], "METRICS_FAILED", "Pilot funnel could not be loaded");
+    const orderCount = Number(f.orders);
+    const quoteCount = Number(f.quotes);
+    const fulfilled = Number(f.fulfilled);
+    return {
+      generatedAt: iso(),
+      funnel: {
+        quotes: f.quotes,
+        orders: f.orders,
+        quoteToOrderPercent: quoteCount ? Number(((orderCount / quoteCount) * 100).toFixed(2)) : 0,
+        terminalSuccessPercent: orderCount ? Number(((fulfilled / orderCount) * 100).toFixed(2)) : 0,
+        cancelledOrders: f.cancelled,
+        refundedOrders: f.refunded,
+        refundRatePercent: fulfilled ? Number(((Number(f.refunded) / fulfilled) * 100).toFixed(2)) : 0,
+      },
+      approvals: {
+        requested: approvals.rows[0]?.requested ?? "0",
+        completed: approvals.rows[0]?.completed ?? "0",
+        medianSeconds: approvals.rows[0]?.median_seconds ?? null,
+      },
+      fulfillment: {
+        pending: fulfillment.rows[0]?.pending ?? "0",
+        failed: fulfillment.rows[0]?.failed ?? "0",
+        averageSeconds: fulfillment.rows[0]?.average_seconds ?? null,
+      },
+      operations: operations.rows[0] ?? { pending_webhooks: "0", dead_webhooks: "0", payouts: "0", audit_coverage: "0" },
+    };
+  }
+
+  async merchantAuditExport(merchantId: string, limit = 250): Promise<Array<Record<string, unknown>>> {
+    const bounded = Math.max(1, Math.min(1000, Math.trunc(limit)));
+    const result = await this.pool.query<{
+      id: string; correlation_id: string; actor_type: string; actor_id: string; event_type: string; object_type: string; object_id: string; metadata: Record<string, unknown>; created_at: Date;
+    }>(
+      `SELECT a.id::text, a.correlation_id, a.actor_type, a.actor_id, a.event_type,
+              a.object_type, a.object_id, a.metadata, a.created_at
+       FROM audit_events a
+       WHERE a.actor_id = $1
+          OR (a.object_type = 'order' AND EXISTS (SELECT 1 FROM orders o WHERE o.id = a.object_id AND o.merchant_id = $1))
+          OR (a.object_type = 'refund' AND EXISTS (SELECT 1 FROM refunds r WHERE r.id = a.object_id AND r.merchant_id = $1))
+          OR (a.object_type = 'payment' AND EXISTS (SELECT 1 FROM payment_intents p WHERE p.id = a.object_id AND p.merchant_id = $1))
+       ORDER BY a.id DESC LIMIT $2`,
+      [merchantId, bounded],
+    );
+    return result.rows.map((row) => ({ ...row, created_at: row.created_at.toISOString() }));
   }
 
   async refundOrder(input: {
@@ -1106,7 +1644,7 @@ export class PaylService {
         );
         return RefundReceiptSchema.parse({ payload: existing.receipt_payload, jws: existing.receipt_jws });
       }
-      if (order.status !== "fulfilled" && order.status !== "confirmed") {
+      if (order.status !== "fulfilled") {
         throw new DomainError("ORDER_NOT_REFUNDABLE", `An order in ${order.status} status cannot be refunded`, 409);
       }
       if (!order.refundable || !order.refund_eligible_until) {
@@ -1119,19 +1657,19 @@ export class PaylService {
       const accounts = await client.query<{
         id: string;
         owner_type: "consumer" | "merchant";
-        account_type: "available" | "payable";
+        account_type: "available" | "payable" | "reserve";
       }>(
         `SELECT id, owner_type, account_type
          FROM ledger_accounts
          WHERE currency = $1 AND (
            (owner_type = 'consumer' AND owner_id = $2 AND account_type = 'available') OR
-           (owner_type = 'merchant' AND owner_id = $3 AND account_type = 'payable')
+           (owner_type = 'merchant' AND owner_id = $3 AND account_type IN ('payable', 'reserve'))
          )
          ORDER BY id FOR UPDATE`,
         [order.currency, input.consumerId, order.merchant_id],
       );
-      const accountId = (ownerType: "consumer" | "merchant") => requireValue(
-        accounts.rows.find((account) => account.owner_type === ownerType)?.id,
+      const accountId = (ownerType: "consumer" | "merchant", accountType: "available" | "payable" | "reserve") => requireValue(
+        accounts.rows.find((account) => account.owner_type === ownerType && account.account_type === accountType)?.id,
         "REFUND_ACCOUNT_MISSING",
         `${ownerType} refund ledger account is missing`,
       );
@@ -1143,10 +1681,26 @@ export class PaylService {
         referenceType: "refund",
         referenceId: refundId,
         lines: [
-          { accountId: accountId("consumer"), amountMinor: amount },
-          { accountId: accountId("merchant"), amountMinor: -amount },
+          { accountId: accountId("consumer", "available"), amountMinor: amount },
+          { accountId: accountId("merchant", "payable"), amountMinor: -amount },
         ],
       });
+
+      const reserveId = accountId("merchant", "reserve");
+      const reserveBalance = await this.accountBalance(client, reserveId);
+      const reserveRecovery = reserveBalance < amount ? reserveBalance : amount;
+      if (reserveRecovery > 0n) {
+        await this.postJournal(client, {
+          eventType: "merchant_reserve_recovery",
+          idempotencyKey: `refund-reserve:${order.id}`,
+          referenceType: "refund",
+          referenceId: refundId,
+          lines: [
+            { accountId: reserveId, amountMinor: -reserveRecovery },
+            { accountId: accountId("merchant", "payable"), amountMinor: reserveRecovery },
+          ],
+        });
+      }
 
       const createdAt = iso();
       const receiptPayload = RefundReceiptPayloadSchema.parse({
@@ -1193,7 +1747,9 @@ export class PaylService {
         refundedAmountMinor: order.captured_amount_minor,
         retainedFeeMinor: order.platform_fee_minor,
         idempotencyKey,
+        reserveRecoveryMinor: reserveRecovery.toString(),
       });
+      await this.enqueueOutbox(client, order.merchant_id, "order.refunded", "order", order.id, receiptPayload, `order-refunded:${order.id}`);
       return receipt;
     });
   }
@@ -1210,7 +1766,11 @@ export class PaylService {
         merchant_name: string;
         offer_id: string;
         offer_name: string;
-        fulfillment_reference: string;
+        fulfillment_reference: string | null;
+        fulfillment_deadline: Date | null;
+        fulfilled_at: Date | null;
+        cancelled_at: Date | null;
+        cancellation_reason: string | null;
         refundable: boolean;
         refund_eligible_until: Date | null;
         refunded_at: Date | null;
@@ -1219,7 +1779,8 @@ export class PaylService {
       }>(
         `SELECT o.id, o.status, o.captured_amount_minor::text, o.currency,
                 m.name AS merchant_name, f.id AS offer_id, f.name AS offer_name,
-                o.fulfillment_reference, o.refundable, o.refund_eligible_until,
+                o.fulfillment_reference, o.fulfillment_deadline, o.fulfilled_at,
+                o.cancelled_at, o.cancellation_reason, o.refundable, o.refund_eligible_until,
                 o.refunded_at, r.retained_fee_minor::text, o.created_at
          FROM orders o
          JOIN payment_intents p ON p.id = o.payment_id
@@ -1239,6 +1800,9 @@ export class PaylService {
       orders: orders.rows.map((row) => ({
         ...row,
         created_at: row.created_at.toISOString(),
+        fulfillment_deadline: row.fulfillment_deadline?.toISOString() ?? null,
+        fulfilled_at: row.fulfilled_at?.toISOString() ?? null,
+        cancelled_at: row.cancelled_at?.toISOString() ?? null,
         refund_eligible_until: row.refund_eligible_until?.toISOString() ?? null,
         refunded_at: row.refunded_at?.toISOString() ?? null,
       })),
@@ -1246,13 +1810,15 @@ export class PaylService {
   }
 
   async merchantDashboard(merchantId: string): Promise<Record<string, unknown>> {
-    const [merchant, offers, orders, journal] = await Promise.all([
+    const [merchant, offers, orders, journal, metrics, reconciliation, payouts, webhook, outbox] = await Promise.all([
       this.pool.query<{
         id: string;
         name: string;
         server_id: string;
         currency: string;
         payable_minor: string;
+        pending_payable_minor: string;
+        reserve_minor: string;
         gross_sales_minor: string;
         platform_fees_minor: string;
         net_sales_minor: string;
@@ -1260,6 +1826,8 @@ export class PaylService {
         refunded_orders: string;
         refunded_amount_minor: string;
         retained_refund_fees_minor: string;
+        pending_orders: string;
+        cancelled_orders: string;
       }>(
         `SELECT m.id, m.name, m.server_id, m.currency,
                 COALESCE((
@@ -1269,14 +1837,28 @@ export class PaylService {
                   WHERE a.owner_type = 'merchant' AND a.owner_id = m.id
                     AND a.account_type = 'payable' AND a.currency = m.currency
                 ), '0') AS payable_minor,
-                COALESCE(sum(o.captured_amount_minor), 0)::text AS gross_sales_minor,
-                COALESCE(sum(o.platform_fee_minor), 0)::text AS platform_fees_minor,
-                (COALESCE(sum(o.captured_amount_minor - o.platform_fee_minor), 0) -
+                COALESCE((
+                  SELECT sum(l.amount_minor)::text
+                  FROM ledger_accounts a LEFT JOIN journal_lines l ON l.account_id = a.id
+                  WHERE a.owner_type = 'merchant' AND a.owner_id = m.id
+                    AND a.account_type = 'pending_payable' AND a.currency = m.currency
+                ), '0') AS pending_payable_minor,
+                COALESCE((
+                  SELECT sum(l.amount_minor)::text
+                  FROM ledger_accounts a LEFT JOIN journal_lines l ON l.account_id = a.id
+                  WHERE a.owner_type = 'merchant' AND a.owner_id = m.id
+                    AND a.account_type = 'reserve' AND a.currency = m.currency
+                ), '0') AS reserve_minor,
+                COALESCE(sum(o.captured_amount_minor) FILTER (WHERE o.status <> 'cancelled'), 0)::text AS gross_sales_minor,
+                COALESCE(sum(o.platform_fee_minor) FILTER (WHERE o.status <> 'cancelled'), 0)::text AS platform_fees_minor,
+                (COALESCE(sum(o.captured_amount_minor - o.platform_fee_minor) FILTER (WHERE o.status <> 'cancelled'), 0) -
                   COALESCE(sum(r.refunded_amount_minor), 0))::text AS net_sales_minor,
-                count(o.id) FILTER (WHERE o.status IN ('confirmed', 'fulfilled'))::text AS completed_orders,
+                count(o.id) FILTER (WHERE o.status IN ('fulfilled', 'refunded'))::text AS completed_orders,
                 count(r.id)::text AS refunded_orders,
                 COALESCE(sum(r.refunded_amount_minor), 0)::text AS refunded_amount_minor,
-                COALESCE(sum(r.retained_fee_minor), 0)::text AS retained_refund_fees_minor
+                COALESCE(sum(r.retained_fee_minor), 0)::text AS retained_refund_fees_minor,
+                count(o.id) FILTER (WHERE o.status IN ('confirmed', 'fulfillment_failed'))::text AS pending_orders,
+                count(o.id) FILTER (WHERE o.status = 'cancelled')::text AS cancelled_orders
          FROM merchants m
          LEFT JOIN orders o ON o.merchant_id = m.id
          LEFT JOIN refunds r ON r.order_id = o.id
@@ -1293,14 +1875,20 @@ export class PaylService {
         merchant_name: string;
         offer_id: string;
         offer_name: string;
-        fulfillment_reference: string;
+        fulfillment_reference: string | null;
+        fulfillment_deadline: Date | null;
+        fulfilled_at: Date | null;
+        cancelled_at: Date | null;
+        cancellation_reason: string | null;
         refunded_at: Date | null;
         retained_fee_minor: string | null;
         created_at: Date;
       }>(
         `SELECT o.id, o.status, o.captured_amount_minor::text, o.currency,
                 m.name AS merchant_name, f.id AS offer_id, f.name AS offer_name,
-                o.fulfillment_reference, o.refunded_at, r.retained_fee_minor::text, o.created_at
+                o.fulfillment_reference, o.fulfillment_deadline, o.fulfilled_at,
+                o.cancelled_at, o.cancellation_reason, o.refunded_at,
+                r.retained_fee_minor::text, o.created_at
          FROM orders o
          JOIN merchants m ON m.id = o.merchant_id
          JOIN quotes q ON q.id = o.quote_id
@@ -1317,7 +1905,20 @@ export class PaylService {
            SELECT e.id, COALESCE(sum(l.amount_minor), 0) AS balance
            FROM journal_entries e JOIN journal_lines l ON l.entry_id = e.id
            GROUP BY e.id
-         ) balances`,
+        ) balances`,
+      ),
+      this.pilotMetrics(merchantId),
+      this.reconciliationReport(merchantId),
+      this.pool.query<{
+        id: string; currency: string; source_payable_minor: string; reserve_held_minor: string; paid_amount_minor: string; status: string; created_at: Date;
+      }>("SELECT * FROM payout_batches WHERE merchant_id = $1 ORDER BY created_at DESC LIMIT 25", [merchantId]),
+      this.pool.query<{ id: string; url: string; active: boolean; updated_at: Date }>(
+        "SELECT id, url, active, updated_at FROM merchant_webhook_endpoints WHERE merchant_id = $1",
+        [merchantId],
+      ),
+      this.pool.query<{ status: string; count: string }>(
+        "SELECT status, count(*)::text AS count FROM outbox_events WHERE merchant_id = $1 GROUP BY status",
+        [merchantId],
       ),
     ]);
     return {
@@ -1329,7 +1930,11 @@ export class PaylService {
             serverId: merchant.rows[0].server_id,
             mcpUrl: new URL(`/mcp/merchants/${merchant.rows[0].id}`, this.config.publicBaseUrl).href,
             currency: merchant.rows[0].currency,
-            balances: { payable: merchant.rows[0].payable_minor },
+            balances: {
+              pendingFulfillment: merchant.rows[0].pending_payable_minor,
+              payable: merchant.rows[0].payable_minor,
+              reserve: merchant.rows[0].reserve_minor,
+            },
             totals: {
               grossSalesMinor: merchant.rows[0].gross_sales_minor,
               platformFeesMinor: merchant.rows[0].platform_fees_minor,
@@ -1338,6 +1943,8 @@ export class PaylService {
               refundedOrders: merchant.rows[0].refunded_orders,
               refundedAmountMinor: merchant.rows[0].refunded_amount_minor,
               retainedRefundFeesMinor: merchant.rows[0].retained_refund_fees_minor,
+              pendingOrders: merchant.rows[0].pending_orders,
+              cancelledOrders: merchant.rows[0].cancelled_orders,
             },
           }
         : null,
@@ -1345,9 +1952,19 @@ export class PaylService {
       orders: orders.rows.map((row) => ({
         ...row,
         created_at: row.created_at.toISOString(),
+        fulfillment_deadline: row.fulfillment_deadline?.toISOString() ?? null,
+        fulfilled_at: row.fulfilled_at?.toISOString() ?? null,
+        cancelled_at: row.cancelled_at?.toISOString() ?? null,
         refunded_at: row.refunded_at?.toISOString() ?? null,
       })),
       ledger: journal.rows[0] ?? { entries: "0", unbalanced_entries: "0" },
+      metrics,
+      reconciliation,
+      payouts: payouts.rows.map((row) => this.payoutResult(row)),
+      webhook: webhook.rows[0]
+        ? { webhookId: webhook.rows[0].id, url: webhook.rows[0].url, active: webhook.rows[0].active, updatedAt: webhook.rows[0].updated_at.toISOString() }
+        : null,
+      outbox: Object.fromEntries(outbox.rows.map((row) => [row.status, row.count])),
     };
   }
 
@@ -1357,6 +1974,342 @@ export class PaylService {
       this.merchantDashboard(this.config.sandboxMerchantId),
     ]);
     return { ...consumer, ...merchant };
+  }
+
+  private async loadOrderStatus(
+    queryable: pg.Pool | pg.PoolClient,
+    orderId: string,
+    merchantId?: string,
+  ): Promise<OrderStatus> {
+    const row = requireValue(
+      (await queryable.query<{
+        id: string;
+        merchant_id: string;
+        payment_id: string;
+        status: "confirmed" | "fulfilled" | "fulfillment_failed" | "cancelled" | "refunded";
+        captured_amount_minor: string;
+        platform_fee_minor: string;
+        currency: string;
+        fulfillment_deadline: Date | null;
+        fulfillment_reference: string | null;
+        fulfilled_at: Date | null;
+        cancelled_at: Date | null;
+        receipt_payload: unknown | null;
+        receipt_jws: string | null;
+        created_at: Date;
+        updated_at: Date;
+      }>(
+        `SELECT id, merchant_id, payment_id, status, captured_amount_minor::text,
+                platform_fee_minor::text, currency, fulfillment_deadline, fulfillment_reference,
+                fulfilled_at, cancelled_at, receipt_payload, receipt_jws, created_at, updated_at
+         FROM orders WHERE id = $1 AND ($2::text IS NULL OR merchant_id = $2)`,
+        [orderId, merchantId ?? null],
+      )).rows[0],
+      "ORDER_NOT_FOUND",
+      "Order was not found",
+    );
+    return OrderStatusSchema.parse({
+      orderId: row.id,
+      merchantId: row.merchant_id,
+      paymentId: row.payment_id,
+      status: row.status,
+      capturedAmountMinor: row.captured_amount_minor,
+      platformFeeMinor: row.platform_fee_minor,
+      currency: row.currency,
+      fulfillmentDeadline: row.fulfillment_deadline?.toISOString() ?? null,
+      fulfillmentReference: row.fulfillment_reference,
+      fulfilledAt: row.fulfilled_at?.toISOString() ?? null,
+      cancelledAt: row.cancelled_at?.toISOString() ?? null,
+      receipt: row.receipt_payload && row.receipt_jws
+        ? OrderReceiptSchema.parse({ payload: row.receipt_payload, jws: row.receipt_jws })
+        : null,
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString(),
+    });
+  }
+
+  private async fulfillOrderLocked(
+    client: pg.PoolClient,
+    input: {
+      merchantId: string;
+      orderId: string;
+      fulfillmentReference: string;
+      idempotencyKey: string;
+      actorType: "merchant" | "system";
+    },
+  ): Promise<void> {
+    const order = requireValue(
+      (await client.query<{
+        id: string;
+        merchant_id: string;
+        quote_id: string;
+        mandate_id: string;
+        payment_id: string;
+        consumer_id: string;
+        status: "confirmed" | "fulfilled" | "fulfillment_failed" | "cancelled" | "refunded";
+        captured_amount_minor: string;
+        platform_fee_minor: string;
+        currency: string;
+        refundable: boolean;
+        refund_window_minutes: number | null;
+        fulfillment_deadline: Date | null;
+      }>(
+        `SELECT o.id, o.merchant_id, o.quote_id, o.mandate_id, o.payment_id, p.consumer_id,
+                o.status, o.captured_amount_minor::text, o.platform_fee_minor::text, o.currency,
+                o.refundable, o.refund_window_minutes, o.fulfillment_deadline
+         FROM orders o JOIN payment_intents p ON p.id = o.payment_id
+         WHERE o.id = $1 FOR UPDATE OF o, p`,
+        [input.orderId],
+      )).rows[0],
+      "ORDER_NOT_FOUND",
+      "Order was not found",
+    );
+    if (order.merchant_id !== input.merchantId) throw new DomainError("ORDER_FORBIDDEN", "Order belongs to another merchant", 403);
+    if (order.status === "fulfilled" || order.status === "refunded") return;
+    if (order.status === "cancelled") throw new DomainError("ORDER_CANCELLED", "Cancelled orders cannot be fulfilled", 409);
+    if (order.fulfillment_deadline && order.fulfillment_deadline.getTime() <= Date.now()) {
+      await this.cancelOrderLocked(client, {
+        orderId: order.id,
+        consumerId: order.consumer_id,
+        idempotencyKey: `fulfillment-timeout:${order.id}`,
+        reason: "Merchant fulfillment deadline expired",
+        actorType: "system",
+      });
+      return;
+    }
+
+    const accounts = await client.query<{ id: string; account_type: "pending_payable" | "payable" }>(
+      `SELECT id, account_type FROM ledger_accounts
+       WHERE owner_type = 'merchant' AND owner_id = $1 AND currency = $2
+         AND account_type IN ('pending_payable', 'payable')
+       ORDER BY id FOR UPDATE`,
+      [input.merchantId, order.currency],
+    );
+    const accountId = (type: "pending_payable" | "payable") => requireValue(
+      accounts.rows.find((account) => account.account_type === type)?.id,
+      "SETTLEMENT_ACCOUNT_MISSING",
+      `Merchant ${type} account is missing`,
+    );
+    const merchantNet = asBigInt(order.captured_amount_minor) - asBigInt(order.platform_fee_minor);
+    await this.postJournal(client, {
+      eventType: "order_fulfillment",
+      idempotencyKey: `fulfillment:${order.id}`,
+      referenceType: "order",
+      referenceId: order.id,
+      lines: [
+        { accountId: accountId("pending_payable"), amountMinor: -merchantNet },
+        { accountId: accountId("payable"), amountMinor: merchantNet },
+      ],
+    });
+
+    const fulfilledAt = new Date();
+    const refundEligibleUntil = order.refundable && order.refund_window_minutes
+      ? new Date(fulfilledAt.getTime() + order.refund_window_minutes * 60_000)
+      : null;
+    const receiptPayload = ReceiptPayloadSchema.parse({
+      schemaVersion: "2026-07-19",
+      merchantId: order.merchant_id,
+      orderId: order.id,
+      quoteId: order.quote_id,
+      mandateId: order.mandate_id,
+      paymentId: order.payment_id,
+      capturedAmountMinor: order.captured_amount_minor,
+      currency: order.currency,
+      fulfillmentStatus: "fulfilled",
+      fulfillmentReference: input.fulfillmentReference,
+      refundable: order.refundable,
+      refundEligibleUntil: refundEligibleUntil?.toISOString() ?? null,
+      createdAt: fulfilledAt.toISOString(),
+    });
+    const receiptJws = await signPayload(receiptPayload, this.merchantKey(input.merchantId));
+    await client.query(
+      `UPDATE orders SET status = 'fulfilled', fulfillment_reference = $2,
+         refund_eligible_until = $3, receipt_payload = $4::jsonb, receipt_jws = $5,
+         fulfilled_at = $6, updated_at = $6 WHERE id = $1`,
+      [order.id, input.fulfillmentReference, refundEligibleUntil, JSON.stringify(receiptPayload), receiptJws, fulfilledAt],
+    );
+    await this.audit(client, order.payment_id, input.actorType, input.actorType === "merchant" ? input.merchantId : "lifecycle_worker", "order.fulfilled", "order", order.id, {
+      fulfillmentReference: input.fulfillmentReference,
+      idempotencyKey: input.idempotencyKey,
+      refundEligibleUntil: refundEligibleUntil?.toISOString() ?? null,
+    });
+    await this.enqueueOutbox(client, input.merchantId, "order.fulfilled", "order", order.id, {
+      orderId: order.id,
+      merchantId: order.merchant_id,
+      fulfillmentReference: input.fulfillmentReference,
+      fulfilledAt: fulfilledAt.toISOString(),
+      receipt: { payload: receiptPayload, jws: receiptJws },
+    }, `order-fulfilled:${order.id}`);
+  }
+
+  private async cancelOrderLocked(
+    client: pg.PoolClient,
+    input: {
+      orderId: string;
+      consumerId: string;
+      idempotencyKey: string;
+      reason: string;
+      actorType: "consumer" | "system";
+    },
+  ): Promise<void> {
+    const order = requireValue(
+      (await client.query<{
+        id: string; payment_id: string; merchant_id: string; consumer_id: string; status: string;
+        captured_amount_minor: string; platform_fee_minor: string; currency: string;
+      }>(
+        `SELECT o.id, o.payment_id, o.merchant_id, p.consumer_id, o.status,
+                o.captured_amount_minor::text, o.platform_fee_minor::text, o.currency
+         FROM orders o JOIN payment_intents p ON p.id = o.payment_id
+         WHERE o.id = $1 FOR UPDATE OF o, p`,
+        [input.orderId],
+      )).rows[0],
+      "ORDER_NOT_FOUND",
+      "Order was not found",
+    );
+    if (order.consumer_id !== input.consumerId) throw new DomainError("ORDER_FORBIDDEN", "Order belongs to another consumer", 403);
+    if (order.status === "cancelled") return;
+    if (order.status !== "confirmed" && order.status !== "fulfillment_failed") {
+      throw new DomainError("ORDER_NOT_CANCELLABLE", `An order in ${order.status} status cannot be cancelled; use the refund flow after fulfillment`, 409);
+    }
+    const accounts = await client.query<{ id: string; owner_type: string; account_type: string }>(
+      `SELECT id, owner_type, account_type FROM ledger_accounts
+       WHERE currency = $1 AND (
+         (owner_type = 'consumer' AND owner_id = $2 AND account_type = 'available') OR
+         (owner_type = 'merchant' AND owner_id = $3 AND account_type = 'pending_payable') OR
+         (owner_type = 'platform' AND owner_id = 'payl' AND account_type = 'fee_revenue')
+       ) ORDER BY id FOR UPDATE`,
+      [order.currency, input.consumerId, order.merchant_id],
+    );
+    const accountId = (ownerType: string, accountType: string) => requireValue(
+      accounts.rows.find((account) => account.owner_type === ownerType && account.account_type === accountType)?.id,
+      "CANCELLATION_ACCOUNT_MISSING",
+      `${ownerType} ${accountType} account is missing`,
+    );
+    const amount = asBigInt(order.captured_amount_minor);
+    const fee = asBigInt(order.platform_fee_minor);
+    const merchantNet = amount - fee;
+    const cancellationId = newId("order_cancel");
+    await this.postJournal(client, {
+      eventType: "order_cancellation",
+      idempotencyKey: `order-cancel:${order.id}`,
+      referenceType: "order_cancellation",
+      referenceId: cancellationId,
+      lines: [
+        { accountId: accountId("consumer", "available"), amountMinor: amount },
+        { accountId: accountId("merchant", "pending_payable"), amountMinor: -merchantNet },
+        { accountId: accountId("platform", "fee_revenue"), amountMinor: -fee },
+      ].filter((line) => line.amountMinor !== 0n),
+    });
+    const cancelledAt = new Date();
+    await client.query(
+      `INSERT INTO order_cancellations(
+         id, order_id, payment_id, consumer_id, merchant_id, reversed_amount_minor,
+         reversed_fee_minor, reason, idempotency_key, status, created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'cancelled', $10)
+       ON CONFLICT (order_id) DO NOTHING`,
+      [cancellationId, order.id, order.payment_id, input.consumerId, order.merchant_id, amount.toString(), fee.toString(), input.reason, input.idempotencyKey, cancelledAt],
+    );
+    await client.query(
+      `UPDATE orders SET status = 'cancelled', cancelled_at = $2, cancellation_reason = $3,
+         updated_at = $2 WHERE id = $1`,
+      [order.id, cancelledAt, input.reason],
+    );
+    await client.query("UPDATE payment_intents SET status = 'cancelled', updated_at = $2 WHERE id = $1", [order.payment_id, cancelledAt]);
+    await this.audit(client, order.payment_id, input.actorType, input.actorType === "consumer" ? input.consumerId : "lifecycle_worker", "order.cancelled", "order", order.id, {
+      reason: input.reason,
+      reversedAmountMinor: amount.toString(),
+      reversedFeeMinor: fee.toString(),
+    });
+    await this.enqueueOutbox(client, order.merchant_id, "order.cancelled", "order", order.id, {
+      orderId: order.id,
+      merchantId: order.merchant_id,
+      reason: input.reason,
+      reversedAmountMinor: amount.toString(),
+      reversedFeeMinor: fee.toString(),
+      cancelledAt: cancelledAt.toISOString(),
+    }, `order-cancelled:${order.id}`);
+  }
+
+  private async releaseReservationLocked(
+    client: pg.PoolClient,
+    payment: PaymentRow,
+    outcome: "released" | "expired",
+  ): Promise<void> {
+    const accounts = await client.query<{ id: string; account_type: "available" | "reserved" }>(
+      `SELECT id, account_type FROM ledger_accounts
+       WHERE owner_type = 'consumer' AND owner_id = $1 AND currency = $2
+         AND account_type IN ('available', 'reserved') ORDER BY id FOR UPDATE`,
+      [payment.consumer_id, payment.currency],
+    );
+    const accountId = (type: "available" | "reserved") => requireValue(
+      accounts.rows.find((account) => account.account_type === type)?.id,
+      "WALLET_ACCOUNTS_MISSING",
+      `Consumer ${type} account is missing`,
+    );
+    const amount = asBigInt(payment.amount_minor);
+    await this.postJournal(client, {
+      eventType: "payment_release",
+      idempotencyKey: `release:${payment.id}`,
+      referenceType: "payment",
+      referenceId: payment.id,
+      lines: [
+        { accountId: accountId("reserved"), amountMinor: -amount },
+        { accountId: accountId("available"), amountMinor: amount },
+      ],
+    });
+    if (payment.mandate_id) {
+      await client.query("UPDATE payment_mandates SET status = $2 WHERE id = $1 AND status = 'reserved'", [payment.mandate_id, outcome]);
+    }
+    await client.query("UPDATE payment_intents SET status = $2, updated_at = now() WHERE id = $1", [payment.id, outcome]);
+  }
+
+  private async enqueueOutbox(
+    client: pg.PoolClient,
+    merchantId: string,
+    eventType: string,
+    aggregateType: string,
+    aggregateId: string,
+    payload: unknown,
+    dedupeKey: string,
+  ): Promise<void> {
+    const endpoint = (await client.query<{ id: string }>(
+      "SELECT id FROM merchant_webhook_endpoints WHERE merchant_id = $1 AND active = true",
+      [merchantId],
+    )).rows[0];
+    await client.query(
+      `INSERT INTO outbox_events(
+         id, merchant_id, endpoint_id, event_type, aggregate_type, aggregate_id, payload, dedupe_key
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+       ON CONFLICT (dedupe_key) DO NOTHING`,
+      [newId("event"), merchantId, endpoint?.id ?? null, eventType, aggregateType, aggregateId, JSON.stringify(payload), dedupeKey],
+    );
+  }
+
+  private async accountBalance(queryable: pg.Pool | pg.PoolClient, accountId: string): Promise<bigint> {
+    return asBigInt((await queryable.query<{ balance: string }>(
+      "SELECT COALESCE(sum(amount_minor), 0)::text AS balance FROM journal_lines WHERE account_id = $1",
+      [accountId],
+    )).rows[0]?.balance ?? "0");
+  }
+
+  private payoutResult(row: {
+    id: string;
+    currency: string;
+    source_payable_minor: string;
+    reserve_held_minor: string;
+    paid_amount_minor: string;
+    status: string;
+    created_at: Date;
+  }): Record<string, unknown> {
+    return {
+      payoutId: row.id,
+      status: row.status,
+      currency: row.currency,
+      sourcePayableMinor: row.source_payable_minor,
+      reserveHeldMinor: row.reserve_held_minor,
+      paidAmountMinor: row.paid_amount_minor,
+      createdAt: row.created_at.toISOString(),
+    };
   }
 
   private async loadOffer(merchantId: string, offerId: string): Promise<OfferRow> {

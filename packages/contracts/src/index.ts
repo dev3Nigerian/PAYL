@@ -117,6 +117,24 @@ export const OrderReceiptSchema = z.object({
 });
 export type OrderReceipt = z.infer<typeof OrderReceiptSchema>;
 
+export const OrderStatusSchema = z.object({
+  orderId: IdentifierSchema,
+  merchantId: IdentifierSchema,
+  paymentId: IdentifierSchema,
+  status: z.enum(["confirmed", "fulfilled", "fulfillment_failed", "cancelled", "refunded"]),
+  capturedAmountMinor: MinorAmountSchema,
+  platformFeeMinor: MinorAmountSchema,
+  currency: CurrencySchema,
+  fulfillmentDeadline: z.string().datetime().nullable(),
+  fulfillmentReference: IdentifierSchema.nullable(),
+  fulfilledAt: z.string().datetime().nullable(),
+  cancelledAt: z.string().datetime().nullable(),
+  receipt: OrderReceiptSchema.nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type OrderStatus = z.infer<typeof OrderStatusSchema>;
+
 export const RefundReceiptPayloadSchema = z.object({
   schemaVersion: z.literal("2026-07-19"),
   refundId: IdentifierSchema,

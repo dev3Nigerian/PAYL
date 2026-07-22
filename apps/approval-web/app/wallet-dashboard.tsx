@@ -27,6 +27,10 @@ export type WalletState = {
     currency: string;
     merchant_name: string;
     offer_name?: string;
+    fulfillment_deadline: string | null;
+    fulfilled_at: string | null;
+    cancelled_at: string | null;
+    cancellation_reason: string | null;
     refundable: boolean;
     refund_eligible_until: string | null;
     refunded_at: string | null;
@@ -66,6 +70,8 @@ function minorUnits(value: string): string {
 }
 
 function refundLabel(order: WalletState["orders"][number]): string {
+  if (order.status === "confirmed") return order.fulfillment_deadline ? `Awaiting merchant fulfillment by ${new Date(order.fulfillment_deadline).toLocaleString("en-NG")}` : "Awaiting merchant fulfillment";
+  if (order.status === "cancelled") return order.cancellation_reason ?? "Cancelled before fulfillment";
   if (order.status === "refunded") return `Refunded${order.refunded_at ? ` ${new Date(order.refunded_at).toLocaleString("en-NG")}` : ""}`;
   if (!order.refundable || !order.refund_eligible_until) return "Not refundable";
   if (new Date(order.refund_eligible_until).getTime() < Date.now()) return "Refund window ended";
@@ -75,18 +81,22 @@ function refundLabel(order: WalletState["orders"][number]): string {
 function ActivityList({
   state,
   onRefund,
+  onCancel,
   refunding,
+  cancelling,
 }: {
   state: WalletState | null;
   onRefund: (order: WalletState["orders"][number]) => void;
+  onCancel: (order: WalletState["orders"][number]) => void;
   refunding: string | null;
+  cancelling: string | null;
 }) {
   if (!state || state.orders.length === 0) return <p className="empty-state">No purchases yet. Connect an MCP client to create one.</p>;
   return <div className="activity-list">{state.orders.map((order) => (
     <div className="activity-row" key={order.id}>
-      <div className={order.status === "refunded" ? "activity-icon refunded" : "activity-icon"}>{order.status === "refunded" ? "RF" : "AI"}</div>
+      <div className={order.status === "refunded" || order.status === "cancelled" ? "activity-icon refunded" : "activity-icon"}>{order.status === "refunded" ? "RF" : order.status === "cancelled" ? "CX" : "AI"}</div>
       <div><strong>{order.offer_name ?? order.merchant_name}</strong><span>{order.merchant_name} · {new Date(order.created_at).toLocaleString("en-NG")}</span><small className="refund-detail">{refundLabel(order)}</small></div>
-      <div className="activity-amount"><strong>{order.status === "refunded" ? "+" : "-"}{money(order.captured_amount_minor, order.currency)}</strong><span>{order.status}</span>{order.status !== "refunded" && order.refundable && order.refund_eligible_until && new Date(order.refund_eligible_until).getTime() >= Date.now() && <button className="refund-button" type="button" disabled={refunding === order.id} onClick={() => onRefund(order)}>{refunding === order.id ? "Refunding…" : "Refund purchase"}</button>}</div>
+      <div className="activity-amount"><strong>{order.status === "refunded" || order.status === "cancelled" ? "+" : "-"}{money(order.captured_amount_minor, order.currency)}</strong><span>{order.status.replaceAll("_", " ")}</span>{order.status === "confirmed" && <button className="refund-button" type="button" disabled={cancelling === order.id} onClick={() => onCancel(order)}>{cancelling === order.id ? "Cancelling…" : "Cancel order"}</button>}{order.status === "fulfilled" && order.refundable && order.refund_eligible_until && new Date(order.refund_eligible_until).getTime() >= Date.now() && <button className="refund-button" type="button" disabled={refunding === order.id} onClick={() => onRefund(order)}>{refunding === order.id ? "Refunding…" : "Refund purchase"}</button>}</div>
     </div>
   ))}</div>;
 }
@@ -102,6 +112,7 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
   }));
   const [saving, setSaving] = useState(false);
   const [refunding, setRefunding] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
 
   async function savePolicy(event: FormEvent<HTMLFormElement>) {
@@ -169,6 +180,28 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
     }
   }
 
+  async function cancelOrder(order: WalletState["orders"][number]) {
+    if (!window.confirm(`Cancel ${order.offer_name ?? order.merchant_name}? The full capture, including PAYL's fee, will be reversed.`)) return;
+    setCancelling(order.id);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/orders/${encodeURIComponent(order.id)}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey: `dashboard-cancel-${order.id}-${crypto.randomUUID()}`.slice(0, 128),
+          reason: "Consumer cancelled before merchant fulfillment",
+        }),
+      });
+      const body = await response.json() as { error?: { message?: string } };
+      if (!response.ok) throw new Error(body.error?.message ?? "Order could not be cancelled");
+      window.location.reload();
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Order could not be cancelled" });
+      setCancelling(null);
+    }
+  }
+
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.assign("/login");
@@ -211,7 +244,7 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
           <section className="wallet-grid">
             <article className="dashboard-panel">
               <div className="panel-title"><div><p className="section-label">Recent activity</p><h2>Agent purchases</h2></div><button className="text-button" type="button" onClick={() => setTab("activity")}>View all</button></div>
-              <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} refunding={refunding} />
+              <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} onCancel={(order) => void cancelOrder(order)} refunding={refunding} cancelling={cancelling} />
             </article>
             <aside className="dashboard-panel policy-panel">
               <p className="section-label">AI spending policy</p><h2>Bounded authority</h2>
@@ -226,7 +259,7 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
         {tab === "activity" && <article className="dashboard-panel section-panel">
           <div className="panel-title"><div><p className="section-label">Ledger activity</p><h2>Completed purchases</h2></div><span>{initialState?.orders.length ?? 0} total</span></div>
           {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
-          <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} refunding={refunding} />
+          <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} onCancel={(order) => void cancelOrder(order)} refunding={refunding} cancelling={cancelling} />
         </article>}
 
         {tab === "permissions" && <><section className="settings-grid section-panel">

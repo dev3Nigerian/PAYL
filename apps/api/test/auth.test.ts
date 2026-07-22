@@ -34,6 +34,8 @@ beforeEach(async () => {
     `TRUNCATE TABLE
        oauth_revoked_access_tokens, oauth_refresh_tokens, oauth_grants, oauth_authorization_codes,
        oauth_consent_requests, oauth_clients, auth_sessions, auth_users,
+       reconciliation_reports, outbox_events, merchant_webhook_endpoints, payout_batches,
+       merchant_settlement_configs, order_cancellations, payment_cancellations,
        audit_events, refunds, orders, payment_mandates, approval_challenges, payment_intents, quotes,
        journal_lines, journal_entries, ledger_accounts, spending_policies, offers, consumers, merchants
      RESTART IDENTITY CASCADE`,
@@ -149,18 +151,18 @@ describe("PAYL identity and MCP authorization", () => {
       password: config.sandboxConsumerPassword,
       role: "consumer",
     }).expect(200);
-    const refund = await request(app).post(`/api/orders/${order.payload.orderId}/refund`)
+    const refund = await request(app).post(`/api/orders/${order.orderId}/refund`)
       .set("authorization", `Bearer ${consumerLogin.body.sessionToken as string}`)
       .send({ idempotencyKey: "refund-api-001", reason: "Consumer API test" })
       .expect(201);
-    expect(refund.body.payload).toMatchObject({ orderId: order.payload.orderId, status: "refunded", retainedFeeMinor: "15000" });
+    expect(refund.body.payload).toMatchObject({ orderId: order.orderId, status: "refunded", retainedFeeMinor: "15000" });
 
     const merchantLogin = await request(app).post("/api/auth/login").send({
       email: config.sandboxMerchantEmail,
       password: config.sandboxMerchantPassword,
       role: "merchant_admin",
     }).expect(200);
-    await request(app).post(`/api/orders/${order.payload.orderId}/refund`)
+    await request(app).post(`/api/orders/${order.orderId}/refund`)
       .set("authorization", `Bearer ${merchantLogin.body.sessionToken as string}`)
       .send({ idempotencyKey: "refund-api-merchant-001" })
       .expect(403);
@@ -234,6 +236,11 @@ describe("PAYL identity and MCP authorization", () => {
     await request(app).post("/mcp/wallet")
       .set("authorization", `Bearer ${accessToken}`)
       .set("accept", "application/json, text/event-stream")
+      .send({ jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "payment.cancel", arguments: { paymentId: "payment_missing", idempotencyKey: "cancel-scope-test" } } })
+      .expect(200);
+    await request(app).post("/mcp/wallet")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("accept", "application/json, text/event-stream")
       .send({
         jsonrpc: "2.0",
         id: 11,
@@ -248,6 +255,11 @@ describe("PAYL identity and MCP authorization", () => {
       .send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "commerce.list_merchants", arguments: {} } })
       .expect(200);
     expect(JSON.stringify(directory.body)).toContain("Network Merchant Two");
+    await request(app).post("/mcp/commerce")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("accept", "application/json, text/event-stream")
+      .send({ jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "commerce.cancel_order", arguments: { orderId: "order_missing", idempotencyKey: "order-cancel-scope-test" } } })
+      .expect(200);
 
     const marketplaceSearch = await request(app).post("/mcp/commerce")
       .set("authorization", `Bearer ${accessToken}`)

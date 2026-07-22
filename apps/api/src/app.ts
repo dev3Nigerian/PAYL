@@ -239,6 +239,32 @@ export function createApp(
       next(error);
     }
   });
+  app.post("/api/payments/:paymentId/cancel", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "consumer");
+      response.json(await service.cancelPayment({
+        consumerId: requireConsumerId(session),
+        paymentId: request.params.paymentId ?? "",
+        idempotencyKey: request.body?.idempotencyKey,
+        reason: request.body?.reason,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/orders/:orderId/cancel", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "consumer");
+      response.json(await service.cancelOrder({
+        consumerId: requireConsumerId(session),
+        orderId: request.params.orderId ?? "",
+        idempotencyKey: request.body?.idempotencyKey,
+        reason: request.body?.reason,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
 
   app.get("/api/oauth/grants", async (request, response, next) => {
     try {
@@ -295,6 +321,80 @@ export function createApp(
         refundable: request.body?.refundable,
         refundWindowMinutes: request.body?.refundWindowMinutes,
       }));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/merchant/orders/:orderId/fulfill", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json(await service.fulfillOrder({
+        merchantId: requireMerchantId(session),
+        orderId: request.params.orderId ?? "",
+        fulfillmentReference: request.body?.fulfillmentReference,
+        idempotencyKey: request.body?.idempotencyKey,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/merchant/payouts", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.status(201).json(await service.createPayout({
+        merchantId: requireMerchantId(session),
+        idempotencyKey: request.body?.idempotencyKey,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/api/merchant/reconciliation", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json(await service.reconciliationReport(requireMerchantId(session)));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/merchant/reconciliation", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.status(201).json(await service.reconciliationReport(requireMerchantId(session), true));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/api/merchant/metrics", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json(await service.pilotMetrics(requireMerchantId(session)));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/api/merchant/audit", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      const limit = Number(request.query.limit ?? 250);
+      response.json({ events: await service.merchantAuditExport(requireMerchantId(session), limit) });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.put("/api/merchant/webhook", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json(await service.configureMerchantWebhook({ merchantId: requireMerchantId(session), url: request.body?.url }));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.delete("/api/merchant/webhook", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      await service.disableMerchantWebhook(requireMerchantId(session));
+      response.status(204).end();
     } catch (error) {
       next(error);
     }

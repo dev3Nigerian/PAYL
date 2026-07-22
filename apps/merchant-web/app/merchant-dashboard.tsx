@@ -23,7 +23,7 @@ export type MerchantState = {
     serverId: string;
     mcpUrl: string;
     currency: string;
-    balances: { payable: string };
+    balances: { pendingFulfillment: string; payable: string; reserve: string };
     totals: {
       grossSalesMinor: string;
       platformFeesMinor: string;
@@ -32,6 +32,8 @@ export type MerchantState = {
       refundedOrders: string;
       refundedAmountMinor: string;
       retainedRefundFeesMinor: string;
+      pendingOrders: string;
+      cancelledOrders: string;
     };
   } | null;
   offers: Offer[];
@@ -42,12 +44,26 @@ export type MerchantState = {
     currency: string;
     offer_id?: string;
     offer_name?: string;
-    fulfillment_reference: string;
+    fulfillment_reference: string | null;
+    fulfillment_deadline: string | null;
+    fulfilled_at: string | null;
+    cancelled_at: string | null;
+    cancellation_reason: string | null;
     refunded_at?: string | null;
     retained_fee_minor?: string | null;
     created_at: string;
   }>;
   ledger: { entries: string; unbalanced_entries: string };
+  metrics: {
+    funnel: { quotes: string; orders: string; quoteToOrderPercent: number; terminalSuccessPercent: number; cancelledOrders: string; refundedOrders: string; refundRatePercent: number };
+    approvals: { requested: string; completed: string; medianSeconds: string | null };
+    fulfillment: { pending: string; failed: string; averageSeconds: string | null };
+    operations: { pending_webhooks: string; dead_webhooks: string; payouts: string; audit_coverage: string };
+  };
+  reconciliation: { differenceMinor: string; reconciled: boolean; expectedPositionMinor: string; actualPositionMinor: string; unbalancedJournalEntries: string };
+  payouts: Array<{ payoutId: string; status: string; currency: string; sourcePayableMinor: string; reserveHeldMinor: string; paidAmountMinor: string; createdAt: string }>;
+  webhook: { webhookId: string; url: string; active: boolean; updatedAt: string } | null;
+  outbox: Record<string, string>;
 };
 
 type Tab = "overview" | "orders" | "products" | "settlement";
@@ -90,11 +106,11 @@ function refundTerms(offer: Offer): string {
   return `Refundable for ${duration.value} ${duration.unit}`;
 }
 
-function OrderTable({ state }: { state: MerchantState }) {
+function OrderTable({ state, onFulfill, fulfilling }: { state: MerchantState; onFulfill: (order: MerchantState["orders"][number]) => void; fulfilling: string | null }) {
   if (state.orders.length === 0) return <p className="empty">No paid orders yet. Products become orders after an AI checkout completes.</p>;
   return <div className="table">{state.orders.map((order) => <div className="row" key={order.id}>
     <div><strong>{order.offer_name ?? "Digital product"}</strong><span className="mono">{order.id}</span><small>{new Date(order.created_at).toLocaleString("en-NG")}</small></div>
-    <span>{money(order.captured_amount_minor, order.currency)}{order.status === "refunded" && <small>PAYL fee retained: {money(order.retained_fee_minor ?? "0", order.currency)}</small>}</span><span className={order.status === "refunded" ? "complete refunded" : "complete"}>{order.status}</span>
+    <span>{money(order.captured_amount_minor, order.currency)}{order.status === "refunded" && <small>PAYL fee retained: {money(order.retained_fee_minor ?? "0", order.currency)}</small>}{order.status === "confirmed" && order.fulfillment_deadline && <small>Due {new Date(order.fulfillment_deadline).toLocaleString("en-NG")}</small>}</span><span className={order.status === "refunded" || order.status === "cancelled" ? "complete refunded" : "complete"}>{order.status.replaceAll("_", " ")}{order.status === "confirmed" && <button className="secondary-button" type="button" disabled={fulfilling === order.id} onClick={() => onFulfill(order)}>{fulfilling === order.id ? "Fulfilling…" : "Mark fulfilled"}</button>}</span>
   </div>)}</div>;
 }
 
@@ -119,6 +135,9 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
     refundUnit: "hours" | "days";
   } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [fulfilling, setFulfilling] = useState<string | null>(null);
+  const [payoutWorking, setPayoutWorking] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState(initialState.webhook?.url ?? "");
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
   const currency = initialState.merchant?.currency ?? "NGN";
@@ -208,6 +227,76 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
     }
   }
 
+  async function fulfillOrder(order: MerchantState["orders"][number]) {
+    const reference = window.prompt("Enter the merchant fulfillment reference", `delivery_${order.id.replaceAll("-", "_")}`);
+    if (!reference) return;
+    setFulfilling(order.id);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/merchant/orders/${encodeURIComponent(order.id)}/fulfill`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fulfillmentReference: reference, idempotencyKey: `dashboard-fulfill-${order.id}`.slice(0, 128) }),
+      });
+      const body = await response.json() as { error?: { message?: string } };
+      if (!response.ok) throw new Error(body.error?.message ?? "Order could not be fulfilled");
+      window.location.reload();
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Order could not be fulfilled" });
+      setFulfilling(null);
+    }
+  }
+
+  async function createPayout() {
+    if (!window.confirm(`Create a sandbox payout from ${money(initialState.merchant?.balances.payable, currency)}? Ten percent will be retained as merchant reserve.`)) return;
+    setPayoutWorking(true);
+    setNotice(null);
+    try {
+      const response = await fetch("/api/merchant/payouts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ idempotencyKey: `dashboard-payout-${crypto.randomUUID()}` }),
+      });
+      const body = await response.json() as { error?: { message?: string }; paidAmountMinor?: string };
+      if (!response.ok) throw new Error(body.error?.message ?? "Payout could not be created");
+      window.location.reload();
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Payout could not be created" });
+      setPayoutWorking(false);
+    }
+  }
+
+  async function saveWebhook(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setNotice(null);
+    try {
+      const response = await fetch("/api/merchant/webhook", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: webhookUrl }),
+      });
+      const body = await response.json() as { error?: { message?: string }; signingSecret?: string };
+      if (!response.ok) throw new Error(body.error?.message ?? "Webhook could not be saved");
+      setNotice({ kind: "ok", message: `Webhook active. Save this signing secret now: ${body.signingSecret ?? "unavailable"}` });
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Webhook could not be saved" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveReconciliation() {
+    setNotice(null);
+    const response = await fetch("/api/merchant/reconciliation", { method: "POST" });
+    const body = await response.json() as { reconciled?: boolean; differenceMinor?: string; error?: { message?: string } };
+    if (!response.ok) {
+      setNotice({ kind: "error", message: body.error?.message ?? "Reconciliation could not be generated" });
+      return;
+    }
+    setNotice({ kind: body.reconciled ? "ok" : "error", message: body.reconciled ? "Reconciliation snapshot saved with zero difference." : `Reconciliation difference: ${body.differenceMinor ?? "unknown"} minor units.` });
+  }
+
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.assign("/login");
@@ -240,13 +329,13 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
 
       {tab === "overview" && <>
         <section className={`merchant-balance ${merchantOwes ? "liability" : ""}`}><div><span>{merchantOwes ? "Amount owed to PAYL" : "Available for settlement"}</span><strong>{money(initialState.merchant?.balances.payable, currency)}</strong><small>{merchantOwes ? "Refunded purchase plus retained PAYL fee" : "Net merchant payable balance"}</small></div><div><span>Gross AI sales</span><strong>{money(initialState.merchant?.totals.grossSalesMinor, currency)}</strong><small>Before refunds and PAYL fees</small></div></section>
-        <div className="metrics"><article><span>Completed orders</span><strong>{initialState.merchant?.totals.completedOrders ?? "0"}</strong></article><article><span>Refunded orders</span><strong>{initialState.merchant?.totals.refundedOrders ?? "0"}</strong></article><article><span>Active products</span><strong>{offers.filter((offer) => offer.active).length}</strong></article><article><span>Net sales</span><strong>{money(initialState.merchant?.totals.netSalesMinor, currency)}</strong></article><article><span>Ledger integrity</span><strong>{initialState.ledger.unbalanced_entries === "0" ? "Balanced" : "Review"}</strong></article></div>
+        <div className="metrics"><article><span>Completed orders</span><strong>{initialState.merchant?.totals.completedOrders ?? "0"}</strong></article><article><span>Awaiting fulfillment</span><strong>{initialState.merchant?.totals.pendingOrders ?? "0"}</strong></article><article><span>Quote conversion</span><strong>{initialState.metrics?.funnel.quoteToOrderPercent ?? 0}%</strong></article><article><span>Median approval</span><strong>{initialState.metrics?.approvals.medianSeconds ? `${Number(initialState.metrics.approvals.medianSeconds).toFixed(0)}s` : "—"}</strong></article><article><span>Ledger integrity</span><strong>{initialState.reconciliation?.reconciled ? "Reconciled" : "Review"}</strong></article></div>
         <article className="mcp-card"><div><p className="eyebrow">PAYL commerce network</p><h2>Your catalog is automatically available to connected AI buyers</h2><code>http://localhost:4100/mcp/commerce</code><small>Optional direct endpoint: {initialState.merchant?.mcpUrl ?? "unavailable"} · Merchant ID: {initialState.merchant?.merchantId ?? "unavailable"}</small></div><button className="secondary-button" type="button" onClick={() => void copyMcpUrl()}>{copied ? "Copied" : "Copy direct endpoint"}</button></article>
-        <article className="panel"><div className="panelhead"><h2>Latest AI orders</h2><button className="text-button" type="button" onClick={() => setTab("orders")}>View all</button></div><OrderTable state={initialState} /></article>
+        <article className="panel"><div className="panelhead"><h2>Latest AI orders</h2><button className="text-button" type="button" onClick={() => setTab("orders")}>View all</button></div><OrderTable state={initialState} onFulfill={(order) => void fulfillOrder(order)} fulfilling={fulfilling} /></article>
       </>}
 
       {tab === "orders" && <section className="orders-layout section-space">
-        <article className="panel"><div className="panelhead"><div><p className="eyebrow">Signed receipts</p><h2>Completed checkout orders</h2></div><span>{initialState.orders.length} total</span></div><OrderTable state={initialState} /></article>
+        <article className="panel"><div className="panelhead"><div><p className="eyebrow">Fulfillment lifecycle</p><h2>Captured merchant orders</h2></div><span>{initialState.orders.length} total</span></div>{notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}<OrderTable state={initialState} onFulfill={(order) => void fulfillOrder(order)} fulfilling={fulfilling} /></article>
         <aside className="workflow-card"><p className="eyebrow">Why merchants do not type in paid orders</p><h2>Orders follow authorization</h2><p>A merchant creates products. PAYL creates the paid order only when a consumer-authorized, quote-bound mandate is committed.</p><ol><li><b>1</b><span>AI finds a product and requests a signed quote.</span></li><li><b>2</b><span>The consumer wallet applies policy and approval.</span></li><li><b>3</b><span>The merchant commits the mandate and receives the order.</span></li></ol></aside>
       </section>}
 
@@ -276,8 +365,12 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
       </section>}
 
       {tab === "settlement" && <section className="settlement-grid section-space">
-        <article className={`settlement-hero ${merchantOwes ? "liability" : ""}`}><span>{merchantOwes ? "Amount owed to PAYL" : "Merchant payable"}</span><strong>{money(initialState.merchant?.balances.payable, currency)}</strong><small>{merchantOwes ? "Refund fees remain due from the merchant" : "Sandbox balance · no bank payout configured"}</small></article>
-        <article className="panel settlement-detail"><div><span>Gross sales</span><strong>{money(initialState.merchant?.totals.grossSalesMinor, currency)}</strong></div><div><span>Consumer refunds</span><strong>-{money(initialState.merchant?.totals.refundedAmountMinor, currency)}</strong></div><div><span>PAYL fees retained</span><strong>-{money(initialState.merchant?.totals.platformFeesMinor, currency)}</strong></div><div><span>Fees retained on refunded orders</span><strong>{money(initialState.merchant?.totals.retainedRefundFeesMinor, currency)}</strong></div><div><span>Net sales</span><strong>{money(initialState.merchant?.totals.netSalesMinor, currency)}</strong></div></article>
+        <article className={`settlement-hero ${merchantOwes ? "liability" : ""}`}><span>{merchantOwes ? "Amount owed to PAYL" : "Merchant payable"}</span><strong>{money(initialState.merchant?.balances.payable, currency)}</strong><small>{merchantOwes ? "Future sales and reserve offset this liability" : "Only fulfilled revenue is payout eligible"}</small><button className="primary-button" type="button" disabled={payoutWorking || Number(initialState.merchant?.balances.payable ?? "0") <= 0} onClick={() => void createPayout()}>{payoutWorking ? "Creating payout…" : "Create sandbox payout"}</button></article>
+        <article className="panel settlement-detail"><div><span>Pending fulfillment</span><strong>{money(initialState.merchant?.balances.pendingFulfillment, currency)}</strong></div><div><span>Merchant reserve</span><strong>{money(initialState.merchant?.balances.reserve, currency)}</strong></div><div><span>Consumer refunds</span><strong>-{money(initialState.merchant?.totals.refundedAmountMinor, currency)}</strong></div><div><span>PAYL fees retained</span><strong>-{money(initialState.merchant?.totals.platformFeesMinor, currency)}</strong></div><div><span>Net sales</span><strong>{money(initialState.merchant?.totals.netSalesMinor, currency)}</strong></div></article>
+        <article className="panel settlement-detail"><div><span>Expected merchant position</span><strong>{money(initialState.reconciliation?.expectedPositionMinor, currency)}</strong></div><div><span>Actual ledger position</span><strong>{money(initialState.reconciliation?.actualPositionMinor, currency)}</strong></div><div><span>Difference</span><strong>{money(initialState.reconciliation?.differenceMinor, currency)}</strong></div><div><span>Webhook queue</span><strong>{initialState.metrics?.operations.pending_webhooks ?? "0"} pending · {initialState.metrics?.operations.dead_webhooks ?? "0"} dead</strong></div><button className="secondary-button" type="button" onClick={() => void saveReconciliation()}>Save reconciliation snapshot</button></article>
+        <form className="panel product-form" onSubmit={saveWebhook}><div className="wide"><p className="eyebrow">Signed operational callbacks</p><h2>Merchant webhook</h2><small>PAYL signs each JSON delivery with HMAC-SHA256 in x-payl-signature and retries failures up to eight times.</small></div><label className="wide"><span>HTTPS endpoint</span><input type="url" required placeholder="https://merchant.example/payl/events" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} /></label><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : initialState.webhook ? "Rotate secret and update" : "Enable webhook"}</button></form>
+        {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
+        <article className="panel"><div className="panelhead"><div><p className="eyebrow">Payout history</p><h2>Sandbox batches</h2></div><span>{initialState.payouts?.length ?? 0} total</span></div>{(initialState.payouts?.length ?? 0) === 0 ? <p className="empty">No payouts yet.</p> : <div className="table">{initialState.payouts.map((payout) => <div className="row" key={payout.payoutId}><div><strong>{payout.payoutId}</strong><small>{new Date(payout.createdAt).toLocaleString("en-NG")}</small></div><span>{money(payout.paidAmountMinor, payout.currency)}<small>Reserve held: {money(payout.reserveHeldMinor, payout.currency)}</small></span><span className="complete">{payout.status}</span></div>)}</div>}</article>
       </section>}
     </section>
   </main>;

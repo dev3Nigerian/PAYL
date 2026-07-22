@@ -45,7 +45,7 @@ Generate the current sandbox authenticator code with:
 pnpm auth:code
 ```
 
-For interactive testing, signed quotes last 60 minutes and approval challenges last 45 minutes by default. Both values are sandbox-only and configurable through `.env`.
+For interactive testing, signed quotes last 60 minutes, approval challenges last 45 minutes, and asynchronous fulfillment lasts 60 minutes by default. The lifecycle worker releases expired reservations and cancels timed-out fulfillment automatically. These values are sandbox-only and configurable through `.env`.
 
 Verification commands:
 
@@ -85,9 +85,17 @@ Merchants do not manually create a paid order. Orders are generated from authori
 3. The AI sends the unchanged signed quote to `payment.prepare` on the consumer wallet.
 4. PAYL applies the consumer's policy and obtains human approval when required.
 5. The AI sends the resulting single-use mandate and signed quote to `commerce.commit_order`.
-6. PAYL captures the reservation, creates the order, and returns a signed receipt.
+6. PAYL captures the reservation into pending merchant revenue and creates the order.
+7. Digital downloads fulfill immediately. Digital services wait for the merchant to select **Mark fulfilled** or call the fulfillment API.
+8. Fulfillment moves pending revenue to payable, starts the snapshotted refund window, and produces the signed receipt.
+
+Before fulfillment, the consumer may call `commerce.cancel_order` or use **Cancel order** in the dashboard. PAYL atomically returns the gross amount to the consumer and reverses both pending merchant revenue and PAYL's fee. `payment.cancel` separately releases an unused reservation or cancels a pending approval. The background lifecycle worker performs the same safe release when authority or fulfillment expires.
 
 An eligible consumer can refund the order from **Activity** or through `payment.request_refund` on `payl_wallet`. PAYL returns the full captured amount to the consumer, debits the merchant by that gross amount, and retains the original PAYL fee. Refunds are full-order, immediate, signed, auditable, and idempotent. A merchant whose refundable order is returned can therefore show a negative payable balance equal to the retained fee.
+
+The merchant **Settlement** workspace separates pending-fulfillment revenue, payout-eligible payable, and reserve. A sandbox payout retains 10% in reserve, moves the remainder to simulated settlement clearing, and is idempotent. Refunds after payout consume reserve first and leave any remaining merchant liability visible. Live reconciliation compares order, cancellation, refund, and payout movements with the three merchant ledger balances. Merchant dashboards also expose quote conversion, approval latency, fulfillment status, refunds, webhook backlog, payout count, audit coverage, and journal integrity.
+
+Merchants can configure an HTTPS webhook in **Settlement**. Order, cancellation, refund, fulfillment, and payout events are written to a durable outbox in the same transaction as the business state. Delivery uses `x-payl-timestamp` plus `x-payl-signature: v1=<HMAC-SHA256>` and retries failures up to eight times. The signing secret is shown only when the webhook is created or rotated.
 
 ## Connect PAYL to Codex or another MCP client
 
@@ -120,11 +128,14 @@ For a remote AI client, ChatGPT plugin, or hosted Codex environment, `localhost`
 consumer MCP client -> PAYL commerce MCP -> registered merchant -> signed quote
 consumer MCP client -> PAYL wallet MCP -> policy + approval
 PAYL -> signed single-use mandate -> merchant commerce MCP
-merchant -> atomic capture + fulfillment -> signed order receipt
+digital download merchant -> atomic capture + fulfillment -> signed order receipt
+merchant -> async fulfillment -> pending revenue becomes payable + signed receipt
+consumer/system -> cancellation or expiry -> atomic release/reversal
 consumer -> policy-eligible full refund -> merchant gross debit + signed refund receipt
+merchant -> reserve-backed sandbox payout -> reconciliation report
 ```
 
-The current implementation includes Streamable HTTP MCP endpoints, OAuth authorization code with PKCE, scoped and audience-bound access tokens, revocable client grants, password sessions, per-approval TOTP, tenant-isolated dashboards, strict shared schemas, Ed25519 JWS signatures, PostgreSQL transactions, a balanced double-entry sandbox ledger, quote-bound mandates, idempotent capture and refunds, audit events, and a reference MCP client.
+The current implementation includes Streamable HTTP MCP endpoints, OAuth authorization code with PKCE, scoped and audience-bound access tokens, revocable client grants, password sessions, per-approval TOTP, tenant-isolated dashboards, strict shared schemas, Ed25519 JWS signatures, PostgreSQL transactions, a balanced double-entry sandbox ledger, quote-bound mandates, idempotent capture/cancellation/refund/payout operations, expiry and outbox workers, signed merchant webhooks, reconciliation, pilot metrics, audit exports, and a reference MCP client.
 
 The local identity provider, seeded passwords, TOTP secret, and deterministic signing keys are development fixtures. Replacing them with independently reviewed IAM, account recovery, protected key storage, and production MFA is mandatory before any hosted or live-funds pilot.
 

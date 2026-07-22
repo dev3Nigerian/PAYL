@@ -11,6 +11,8 @@ const ConfigSchema = z.object({
   PAYL_DEV_KEYS: z.enum(["true", "false"]).default("true"),
   SANDBOX_QUOTE_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   SANDBOX_APPROVAL_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(45),
+  SANDBOX_FULFILLMENT_TTL_MINUTES: z.coerce.number().int().min(1).max(10080).default(60),
+  LIFECYCLE_WORKER_INTERVAL_MS: z.coerce.number().int().min(250).max(60000).default(2000),
   SANDBOX_CONSUMER_ID: z.string().default("consumer_demo"),
   SANDBOX_MERCHANT_ID: z.string().default("merchant_demo"),
   SANDBOX_CONSUMER_EMAIL: z.string().email().default("consumer@payl.local"),
@@ -32,6 +34,8 @@ export type Config = {
   devKeys: boolean;
   sandboxQuoteTtlMinutes: number;
   sandboxApprovalTtlMinutes: number;
+  sandboxFulfillmentTtlMinutes: number;
+  lifecycleWorkerIntervalMs: number;
   sandboxConsumerId: string;
   sandboxMerchantId: string;
   sandboxConsumerEmail: string;
@@ -61,6 +65,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     devKeys: parsed.PAYL_DEV_KEYS === "true",
     sandboxQuoteTtlMinutes: parsed.SANDBOX_QUOTE_TTL_MINUTES,
     sandboxApprovalTtlMinutes: parsed.SANDBOX_APPROVAL_TTL_MINUTES,
+    sandboxFulfillmentTtlMinutes: parsed.SANDBOX_FULFILLMENT_TTL_MINUTES,
+    lifecycleWorkerIntervalMs: parsed.LIFECYCLE_WORKER_INTERVAL_MS,
     sandboxConsumerId: parsed.SANDBOX_CONSUMER_ID,
     sandboxMerchantId: parsed.SANDBOX_MERCHANT_ID,
     sandboxConsumerEmail: parsed.SANDBOX_CONSUMER_EMAIL.toLowerCase(),

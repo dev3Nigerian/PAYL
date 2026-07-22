@@ -354,11 +354,13 @@ export function toolScopeForRequest(request: Request, surface: "wallet" | "merch
   const tool = request.body?.method === "tools/call" ? request.body?.params?.name : undefined;
   if (surface === "wallet") {
     if (tool === "payment.prepare") return "wallet:pay";
+    if (tool === "payment.cancel") return "wallet:pay";
     if (tool === "payment.request_refund") return "wallet:refund";
     return "wallet:read";
   }
   if (tool === "commerce.create_quote") return "commerce:quote";
   if (tool === "commerce.commit_order") return "commerce:order";
+  if (tool === "commerce.cancel_order") return "commerce:order";
   return "commerce:read";
 }
 

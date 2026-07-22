@@ -9,7 +9,22 @@ export const dynamic = "force-dynamic";
 export default async function Page() {
   const token = (await cookies()).get("payl_merchant_session")?.value;
   if (!token) redirect("/login");
-  let state: MerchantState = { merchant: null, offers: [], orders: [], ledger: { entries: "0", unbalanced_entries: "0" } };
+  let state: MerchantState = {
+    merchant: null,
+    offers: [],
+    orders: [],
+    ledger: { entries: "0", unbalanced_entries: "0" },
+    metrics: {
+      funnel: { quotes: "0", orders: "0", quoteToOrderPercent: 0, terminalSuccessPercent: 0, cancelledOrders: "0", refundedOrders: "0", refundRatePercent: 0 },
+      approvals: { requested: "0", completed: "0", medianSeconds: null },
+      fulfillment: { pending: "0", failed: "0", averageSeconds: null },
+      operations: { pending_webhooks: "0", dead_webhooks: "0", payouts: "0", audit_coverage: "0" },
+    },
+    reconciliation: { differenceMinor: "0", reconciled: true, expectedPositionMinor: "0", actualPositionMinor: "0", unbalancedJournalEntries: "0" },
+    payouts: [],
+    webhook: null,
+    outbox: {},
+  };
   let offline = false;
   let response: Response | null = null;
   try {

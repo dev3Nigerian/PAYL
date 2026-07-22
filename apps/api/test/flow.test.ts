@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createHmac } from "node:crypto";
+import { createServer } from "node:http";
 import { loadConfig } from "../src/config.js";
 import { createPool } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
@@ -28,6 +30,8 @@ beforeEach(async () => {
     `TRUNCATE TABLE
        oauth_revoked_access_tokens, oauth_refresh_tokens, oauth_grants, oauth_authorization_codes,
        oauth_consent_requests, oauth_clients, auth_sessions, auth_users,
+       reconciliation_reports, outbox_events, merchant_webhook_endpoints, payout_batches,
+       merchant_settlement_configs, order_cancellations, payment_cancellations,
        audit_events, refunds, orders, payment_mandates, approval_challenges, payment_intents, quotes,
        journal_lines, journal_entries, ledger_accounts, spending_policies, offers, consumers, merchants
      RESTART IDENTITY CASCADE`,
@@ -67,8 +71,8 @@ describe("PAYL signed quote to receipt flow", () => {
       mandate: authorized.mandate as never,
       idempotencyKey: "commit-human-001",
     });
-    expect(receipt.payload.capturedAmountMinor).toBe("750000");
-    expect(receipt.payload.fulfillmentStatus).toBe("fulfilled");
+    expect(receipt.receipt?.payload.capturedAmountMinor).toBe("750000");
+    expect(receipt.receipt?.payload.fulfillmentStatus).toBe("fulfilled");
 
     const duplicate = await service.commitOrder({
       merchantId: "merchant_demo",
@@ -76,10 +80,10 @@ describe("PAYL signed quote to receipt flow", () => {
       mandate: authorized.mandate as never,
       idempotencyKey: "commit-human-retry-002",
     });
-    expect(duplicate.payload.orderId).toBe(receipt.payload.orderId);
+    expect(duplicate.orderId).toBe(receipt.orderId);
 
     const state = await service.demoState();
-    expect(state.ledger).toEqual({ entries: "3", unbalanced_entries: "0" });
+    expect(state.ledger).toEqual({ entries: "4", unbalanced_entries: "0" });
     expect((state.wallet as { balances: unknown }).balances).toEqual({ available: "9250000", reserved: "0" });
 
     const merchant = await pool.query<{ balance: string }>(
@@ -213,11 +217,11 @@ describe("PAYL signed quote to receipt flow", () => {
     });
 
     const [refund, retry] = await Promise.all([
-      service.refundOrder({ consumerId: "consumer_demo", orderId: order.payload.orderId, idempotencyKey: "refund-full-001", reason: "Not needed" }),
-      service.refundOrder({ consumerId: "consumer_demo", orderId: order.payload.orderId, idempotencyKey: "refund-full-001", reason: "Not needed" }),
+      service.refundOrder({ consumerId: "consumer_demo", orderId: order.orderId, idempotencyKey: "refund-full-001", reason: "Not needed" }),
+      service.refundOrder({ consumerId: "consumer_demo", orderId: order.orderId, idempotencyKey: "refund-full-001", reason: "Not needed" }),
     ]);
     expect(refund.payload).toMatchObject({
-      orderId: order.payload.orderId,
+      orderId: order.orderId,
       refundedAmountMinor: "750000",
       retainedFeeMinor: "15000",
       status: "refunded",
@@ -225,7 +229,7 @@ describe("PAYL signed quote to receipt flow", () => {
     expect(retry.payload.refundId).toBe(refund.payload.refundId);
     const secondRetry = await service.refundOrder({
       consumerId: "consumer_demo",
-      orderId: order.payload.orderId,
+      orderId: order.orderId,
       idempotencyKey: "refund-full-retry-002",
     });
     expect(secondRetry.payload.refundId).toBe(refund.payload.refundId);
@@ -244,14 +248,14 @@ describe("PAYL signed quote to receipt flow", () => {
     const lifecycle = await pool.query<{ order_status: string; payment_status: string }>(
       `SELECT o.status AS order_status, p.status AS payment_status
        FROM orders o JOIN payment_intents p ON p.id = o.payment_id WHERE o.id = $1`,
-      [order.payload.orderId],
+      [order.orderId],
     );
     expect(lifecycle.rows[0]).toEqual({ order_status: "refunded", payment_status: "refunded" });
     const state = await service.demoState() as {
       ledger: { entries: string; unbalanced_entries: string };
       merchant: { totals: { netSalesMinor: string; retainedRefundFeesMinor: string; refundedOrders: string } };
     };
-    expect(state.ledger).toEqual({ entries: "4", unbalanced_entries: "0" });
+    expect(state.ledger).toEqual({ entries: "5", unbalanced_entries: "0" });
     expect(state.merchant.totals).toMatchObject({ netSalesMinor: "-15000", retainedRefundFeesMinor: "15000", refundedOrders: "1" });
 
     const otherQuote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
@@ -270,7 +274,7 @@ describe("PAYL signed quote to receipt flow", () => {
     });
     await expect(service.refundOrder({
       consumerId: "consumer_demo",
-      orderId: otherOrder.payload.orderId,
+      orderId: otherOrder.orderId,
       idempotencyKey: "refund-full-001",
     })).rejects.toThrow("already used for another order");
   });
@@ -299,7 +303,7 @@ describe("PAYL signed quote to receipt flow", () => {
     });
     await expect(service.refundOrder({
       consumerId: "consumer_demo",
-      orderId: finalOrder.payload.orderId,
+      orderId: finalOrder.orderId,
       idempotencyKey: "refund-final-sale-001",
     })).rejects.toThrow("non-refundable");
 
@@ -321,13 +325,13 @@ describe("PAYL signed quote to receipt flow", () => {
     await pool.query("INSERT INTO consumers(id, display_name, status) VALUES ('consumer_other', 'Other Consumer', 'active')");
     await expect(service.refundOrder({
       consumerId: "consumer_other",
-      orderId: refundableOrder.payload.orderId,
+      orderId: refundableOrder.orderId,
       idempotencyKey: "refund-foreign-001",
     })).rejects.toThrow("Only the consumer");
-    await pool.query("UPDATE orders SET refund_eligible_until = now() - interval '1 second' WHERE id = $1", [refundableOrder.payload.orderId]);
+    await pool.query("UPDATE orders SET refund_eligible_until = now() - interval '1 second' WHERE id = $1", [refundableOrder.orderId]);
     await expect(service.refundOrder({
       consumerId: "consumer_demo",
-      orderId: refundableOrder.payload.orderId,
+      orderId: refundableOrder.orderId,
       idempotencyKey: "refund-expired-001",
     })).rejects.toThrow("window has expired");
   });
@@ -379,7 +383,7 @@ describe("PAYL signed quote to receipt flow", () => {
     if (atlasPayment.status !== "reserved" || secondPayment.status !== "reserved") {
       throw new Error("Expected both policy-approved payments to reserve immediately");
     }
-    await service.commitOrder({
+    const atlasOrder = await service.commitOrder({
       merchantId: "merchant_demo",
       signedQuote: atlasQuote,
       mandate: atlasPayment.mandate,
@@ -390,6 +394,18 @@ describe("PAYL signed quote to receipt flow", () => {
       signedQuote: secondQuote,
       mandate: secondPayment.mandate,
       idempotencyKey: "commit-second-multi-001",
+    });
+    await service.fulfillOrder({
+      merchantId: "merchant_demo",
+      orderId: atlasOrder.orderId,
+      fulfillmentReference: "fulfillment_atlas_multi",
+      idempotencyKey: "fulfill-atlas-multi-001",
+    });
+    await service.fulfillOrder({
+      merchantId: secondMerchantId,
+      orderId: secondReceipt.orderId,
+      fulfillmentReference: "fulfillment_second_multi",
+      idempotencyKey: "fulfill-second-multi-001",
     });
 
     const atlas = await service.merchantDashboard("merchant_demo") as { merchant: { balances: { payable: string }; totals: { completedOrders: string } } };
@@ -402,7 +418,7 @@ describe("PAYL signed quote to receipt flow", () => {
 
     await service.refundOrder({
       consumerId: "consumer_demo",
-      orderId: secondReceipt.payload.orderId,
+      orderId: secondReceipt.orderId,
       idempotencyKey: "refund-second-multi-001",
     });
     const atlasAfterRefund = await service.merchantDashboard("merchant_demo") as { merchant: { balances: { payable: string } } };
@@ -410,5 +426,178 @@ describe("PAYL signed quote to receipt flow", () => {
     expect(atlasAfterRefund.merchant.balances.payable).toBe("98000");
     expect(secondAfterRefund.merchant.balances.payable).toBe("-4000");
     expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "9900000", reserved: "0" });
+  });
+
+  it("cancels unused payment authority and releases reserved funds exactly once", async () => {
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+    const quote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
+    const prepared = await service.preparePayment({
+      consumerId: "consumer_demo",
+      agentClientId: "agent_cancel_test",
+      signedQuote: quote,
+      idempotencyKey: "prepare-cancel-payment-001",
+    });
+    if (prepared.status !== "reserved") throw new Error("Expected reserved payment");
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "9250000", reserved: "750000" });
+
+    const first = await service.cancelPayment({
+      consumerId: "consumer_demo",
+      paymentId: prepared.paymentId,
+      idempotencyKey: "cancel-payment-001",
+      reason: "No longer needed",
+    });
+    const retry = await service.cancelPayment({
+      consumerId: "consumer_demo",
+      paymentId: prepared.paymentId,
+      idempotencyKey: "cancel-payment-001",
+    });
+    expect(first).toMatchObject({ status: "cancelled", releasedAmountMinor: "750000" });
+    expect(retry).toMatchObject({ status: "cancelled", releasedAmountMinor: "750000" });
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "10000000", reserved: "0" });
+  });
+
+  it("keeps service revenue pending until fulfillment and fully reverses pre-fulfillment cancellation", async () => {
+    const product = await service.createMerchantOffer({
+      merchantId: "merchant_demo",
+      name: "Async Service",
+      description: "A service requiring an explicit merchant fulfillment callback.",
+      priceMinor: "200000",
+      fulfillmentMethod: "digital_service",
+      refundable: true,
+      refundWindowMinutes: 1440,
+    });
+    const quote = await service.createQuote("merchant_demo", product.offerId as string, 1);
+    const prepared = await service.preparePayment({
+      consumerId: "consumer_demo",
+      agentClientId: "agent_async_test",
+      signedQuote: quote,
+      idempotencyKey: "prepare-async-cancel-001",
+    });
+    if (prepared.status !== "reserved") throw new Error("Expected reserved payment");
+    const order = await service.commitOrder({
+      merchantId: "merchant_demo",
+      signedQuote: quote,
+      mandate: prepared.mandate,
+      idempotencyKey: "commit-async-cancel-001",
+    });
+    expect(order.status).toBe("confirmed");
+    expect(order.receipt).toBeNull();
+    const before = await service.merchantDashboard("merchant_demo") as { merchant: { balances: { pendingFulfillment: string; payable: string } } };
+    expect(before.merchant.balances).toMatchObject({ pendingFulfillment: "196000", payable: "0" });
+
+    const cancelled = await service.cancelOrder({
+      consumerId: "consumer_demo",
+      orderId: order.orderId,
+      idempotencyKey: "cancel-async-order-001",
+      reason: "Merchant has not started work",
+    });
+    expect(cancelled.status).toBe("cancelled");
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "10000000", reserved: "0" });
+    const after = await service.merchantDashboard("merchant_demo") as { merchant: { balances: { pendingFulfillment: string; payable: string } } };
+    expect(after.merchant.balances).toMatchObject({ pendingFulfillment: "0", payable: "0" });
+    const fee = await pool.query<{ balance: string }>(
+      "SELECT COALESCE(sum(l.amount_minor), 0)::text AS balance FROM journal_lines l WHERE l.account_id = 'acct_platform_fee'",
+    );
+    expect(fee.rows[0]?.balance).toBe("0");
+  });
+
+  it("expires reservations and timed-out fulfillment through the lifecycle worker", async () => {
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+    const expiringQuote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
+    const expiringPayment = await service.preparePayment({
+      consumerId: "consumer_demo",
+      agentClientId: "agent_expiry_test",
+      signedQuote: expiringQuote,
+      idempotencyKey: "prepare-expiring-payment-001",
+    });
+    await pool.query("UPDATE payment_intents SET expires_at = now() - interval '1 second' WHERE id = $1", [expiringPayment.paymentId]);
+    const firstRun = await service.processExpirations();
+    expect(firstRun).toMatchObject({ paymentsExpired: 1, reservationsReleased: 1 });
+    expect((await service.paymentStatus(expiringPayment.paymentId, "consumer_demo")).status).toBe("expired");
+
+    const serviceProduct = await service.createMerchantOffer({
+      merchantId: "merchant_demo",
+      name: "Timeout Service",
+      description: "A service used to verify fulfillment timeout compensation.",
+      priceMinor: "100000",
+      fulfillmentMethod: "digital_service",
+    });
+    const quote = await service.createQuote("merchant_demo", serviceProduct.offerId as string, 1);
+    const prepared = await service.preparePayment({
+      consumerId: "consumer_demo",
+      agentClientId: "agent_expiry_test",
+      signedQuote: quote,
+      idempotencyKey: "prepare-timeout-order-001",
+    });
+    if (prepared.status !== "reserved") throw new Error("Expected reserved payment");
+    const order = await service.commitOrder({ merchantId: "merchant_demo", signedQuote: quote, mandate: prepared.mandate, idempotencyKey: "commit-timeout-order-001" });
+    await pool.query("UPDATE orders SET fulfillment_deadline = now() - interval '1 second' WHERE id = $1", [order.orderId]);
+    const secondRun = await service.processExpirations();
+    expect(secondRun.ordersCancelled).toBe(1);
+    expect((await service.getOrder("merchant_demo", order.orderId)).status).toBe("cancelled");
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "10000000", reserved: "0" });
+  });
+
+  it("creates reserve-backed payouts, reconciles the ledger, and surfaces pilot operations", async () => {
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+    const quote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
+    const prepared = await service.preparePayment({ consumerId: "consumer_demo", agentClientId: "agent_payout_test", signedQuote: quote, idempotencyKey: "prepare-payout-001" });
+    if (prepared.status !== "reserved") throw new Error("Expected reserved payment");
+    const order = await service.commitOrder({ merchantId: "merchant_demo", signedQuote: quote, mandate: prepared.mandate, idempotencyKey: "commit-payout-001" });
+
+    const payout = await service.createPayout({ merchantId: "merchant_demo", idempotencyKey: "payout-batch-001" });
+    expect(payout).toMatchObject({ sourcePayableMinor: "735000", reserveHeldMinor: "73500", paidAmountMinor: "661500", status: "paid" });
+    const payoutRetry = await service.createPayout({ merchantId: "merchant_demo", idempotencyKey: "payout-batch-001" });
+    expect(payoutRetry.payoutId).toBe(payout.payoutId);
+    expect(await service.reconciliationReport("merchant_demo")).toMatchObject({ differenceMinor: "0", reconciled: true });
+
+    await service.refundOrder({ consumerId: "consumer_demo", orderId: order.orderId, idempotencyKey: "refund-after-payout-001" });
+    const dashboard = await service.merchantDashboard("merchant_demo") as {
+      merchant: { balances: { payable: string; reserve: string } };
+      metrics: { funnel: { orders: string; refundedOrders: string }; operations: { payouts: string } };
+    };
+    expect(dashboard.merchant.balances).toMatchObject({ payable: "-676500", reserve: "0" });
+    expect(dashboard.metrics.funnel).toMatchObject({ orders: "1", refundedOrders: "1" });
+    expect(dashboard.metrics.operations.payouts).toBe("1");
+    expect(await service.reconciliationReport("merchant_demo", true)).toMatchObject({ differenceMinor: "0", reconciled: true });
+    expect(await service.processOutbox()).toMatchObject({ delivered: 4, dead: 0 });
+    expect((await service.merchantAuditExport("merchant_demo")).length).toBeGreaterThan(0);
+  });
+
+  it("delivers durable merchant events with a verifiable HMAC signature", async () => {
+    const deliveries: Array<{ body: string; timestamp: string; signature: string }> = [];
+    const webhookServer = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        deliveries.push({
+          body: Buffer.concat(chunks).toString("utf8"),
+          timestamp: String(request.headers["x-payl-timestamp"] ?? ""),
+          signature: String(request.headers["x-payl-signature"] ?? ""),
+        });
+        response.writeHead(204).end();
+      });
+    });
+    await new Promise<void>((resolve) => webhookServer.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = webhookServer.address();
+      if (!address || typeof address === "string") throw new Error("Webhook test server did not bind a TCP port");
+      const configured = await service.configureMerchantWebhook({ merchantId: "merchant_demo", url: `http://127.0.0.1:${address.port}/payl` });
+      const quote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
+      await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+      const prepared = await service.preparePayment({ consumerId: "consumer_demo", agentClientId: "agent_webhook_test", signedQuote: quote, idempotencyKey: "prepare-webhook-001" });
+      if (prepared.status !== "reserved") throw new Error("Expected reserved payment");
+      await service.commitOrder({ merchantId: "merchant_demo", signedQuote: quote, mandate: prepared.mandate, idempotencyKey: "commit-webhook-001" });
+
+      expect(await service.processOutbox(2)).toMatchObject({ delivered: 2, retried: 0, dead: 0 });
+      expect(deliveries).toHaveLength(2);
+      for (const delivery of deliveries) {
+        const expected = `v1=${createHmac("sha256", String(configured.signingSecret)).update(`${delivery.timestamp}.${delivery.body}`).digest("hex")}`;
+        expect(delivery.signature).toBe(expected);
+        expect(JSON.parse(delivery.body)).toMatchObject({ id: expect.any(String), type: expect.any(String), data: { merchantId: "merchant_demo" } });
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => webhookServer.close((error) => error ? reject(error) : resolve()));
+    }
   });
 });
