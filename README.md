@@ -8,7 +8,7 @@
 
 PAYL will be a two-sided payment and commerce network for consumers and merchants:
 
-> **A consumer gives an AI bounded spending authority. The AI connects directly to a merchant's MCP commerce server, obtains a signed quote, authorizes payment through PAYL, commits the order, and receives a verifiable receipt.**
+> **A consumer gives an AI bounded spending authority. The AI connects once to the PAYL commerce MCP network, discovers registered merchants, obtains merchant-signed quotes, authorizes payment through PAYL, commits merchant-bound orders, and receives verifiable receipts.**
 
 The direction is consumer-and-merchant commerce—not an enterprise-only authorization product.
 
@@ -29,14 +29,23 @@ This starts:
 - Consumer approval web app at `http://localhost:3000`.
 - Merchant console at `http://localhost:3001`.
 - PostgreSQL 18 at `localhost:54329`.
+- An isolated, temporary test PostgreSQL instance at `localhost:54330` when `pnpm test` runs.
 
-In another terminal, run the two-server reference consumer agent:
+In another terminal, run the two-connection reference consumer agent:
 
 ```powershell
 pnpm demo
 ```
 
-The agent prints a consumer approval URL and waits. Open the URL, review the immutable quote, and approve it. For automated local verification only, use `pnpm demo:auto`; this shortcut still calls the separate approval API and is disabled by design outside sandbox mode.
+The agent first prints an OAuth authorization URL. Open it, sign in as the consumer, and approve the requested MCP scopes. When a payment requires human approval, open the returned approval URL, review the immutable quote, and enter the current authenticator code.
+
+Generate the current sandbox authenticator code with:
+
+```powershell
+pnpm auth:code
+```
+
+For interactive testing, signed quotes last 60 minutes, approval challenges last 45 minutes, and asynchronous fulfillment lasts 60 minutes by default. The lifecycle worker releases expired reservations and cancels timed-out fulfillment automatically. These values are sandbox-only and configurable through `.env`.
 
 Verification commands:
 
@@ -48,24 +57,94 @@ pnpm build
 
 The database is preloaded with ₦100,000 of simulated consumer funds. No real money, card data, bank credentials, or reusable approval credentials are used.
 
+Sandbox dashboard accounts:
+
+| Workspace | Email | Password |
+|---|---|---|
+| Consumer | `consumer@payl.local` | `ConsumerDemo!2026` |
+| Merchant | `merchant@payl.local` | `MerchantDemo!2026` |
+
+The consumer TOTP seed is `JBSWY3DPEHPK3PXP`. It is a public local-development secret and must never be reused outside this sandbox.
+
+## Using the dashboards
+
+The consumer dashboard has working navigation for wallet balance, activity, AI permissions, and security. Under **AI permissions**, the consumer can set:
+
+- the amount an AI may auto-approve;
+- the maximum amount per transaction; and
+- the maximum captured amount per day.
+
+Policy updates are versioned and enforced by the wallet when `payment.prepare` is called. The auto-approve limit cannot exceed the transaction limit, and the transaction limit cannot exceed the daily limit.
+
+The merchant dashboard supports merchant self-registration at `http://localhost:3001/register` and multiple products under **Products**. Registration atomically provisions an isolated merchant identity, NGN payable account, product catalog, signing identity, and merchant-specific MCP endpoint. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, can mark it refundable for 1 hour through 365 days, and can publish or hide it. Refund terms are signed into each quote, so later product changes do not alter an existing order. Published products immediately appear in `commerce.search_offers` through that merchant's MCP server.
+
+Merchants do not manually create a paid order. Orders are generated from authorized checkout so the merchant cannot accidentally record an unpaid sale:
+
+1. The consumer's AI calls `commerce.search_offers` and selects a product.
+2. The AI calls `commerce.create_quote` for that product and quantity.
+3. The AI sends the unchanged signed quote to `payment.prepare` on the consumer wallet.
+4. PAYL applies the consumer's policy and obtains human approval when required.
+5. The AI sends the resulting single-use mandate and signed quote to `commerce.commit_order`.
+6. PAYL captures the reservation into pending merchant revenue and creates the order.
+7. Digital downloads fulfill immediately. Digital services wait for the merchant to select **Mark fulfilled** or call the fulfillment API.
+8. Fulfillment moves pending revenue to payable, starts the snapshotted refund window, and produces the signed receipt.
+
+Before fulfillment, the consumer may call `commerce.cancel_order` or use **Cancel order** in the dashboard. PAYL atomically returns the gross amount to the consumer and reverses both pending merchant revenue and PAYL's fee. `payment.cancel` separately releases an unused reservation or cancels a pending approval. The background lifecycle worker performs the same safe release when authority or fulfillment expires.
+
+An eligible consumer can refund the order from **Activity** or through `payment.request_refund` on `payl_wallet`. PAYL returns the full captured amount to the consumer, debits the merchant by that gross amount, and retains the original PAYL fee. Refunds are full-order, immediate, signed, auditable, and idempotent. A merchant whose refundable order is returned can therefore show a negative payable balance equal to the retained fee.
+
+The merchant **Settlement** workspace separates pending-fulfillment revenue, payout-eligible payable, and reserve. A sandbox payout retains 10% in reserve, moves the remainder to simulated settlement clearing, and is idempotent. Refunds after payout consume reserve first and leave any remaining merchant liability visible. Live reconciliation compares order, cancellation, refund, and payout movements with the three merchant ledger balances. Merchant dashboards also expose quote conversion, approval latency, fulfillment status, refunds, webhook backlog, payout count, audit coverage, and journal integrity.
+
+Merchants can configure an HTTPS webhook in **Settlement**. Order, cancellation, refund, fulfillment, and payout events are written to a durable outbox in the same transaction as the business state. Delivery uses `x-payl-timestamp` plus `x-payl-signature: v1=<HMAC-SHA256>` and retries failures up to eight times. The signing secret is shown only when the webhook is created or rotated.
+
+## Connect PAYL to Codex or another MCP client
+
+This repository includes `.codex/config.toml` with two project-scoped Streamable HTTP connections that the consumer configures once:
+
+- `payl_wallet` → `http://localhost:4100/mcp/wallet`
+- `payl_commerce` → `http://localhost:4100/mcp/commerce`
+
+After starting PAYL with `pnpm dev`, trust the repository and restart Codex or open a new Codex task. In Codex, use `/mcp` or **Settings → MCP servers** to connect. PAYL returns protected-resource metadata, Codex opens the consumer login and consent flow, and write-capable tools retain the `writes` approval mode.
+
+Refunds use the separate `wallet:refund` OAuth permission. Connections authorized before this scope was added must be revoked and reconnected before `payment.request_refund` can be called; dashboard refunds continue to use the signed-in consumer session.
+
+To configure another OAuth-capable MCP client, register the same two Streamable HTTP URLs. Clients discover PAYL's OAuth authorization server, dynamically register a client, use authorization code with PKCE, and receive audience-bound bearer tokens for `http://localhost:4100/mcp`. New merchants and products appear through `payl_commerce` automatically; the consumer does not add or authorize another MCP server.
+
+### Test quotes across multiple merchants
+
+1. Connect `payl_wallet` and `payl_commerce` once.
+2. Open `http://localhost:3001/register` and create additional sandbox merchants.
+3. Add at least one product from each merchant's **Products** tab.
+4. Without changing MCP configuration, ask the AI to call `commerce.list_merchants` or `commerce.search_offers` and compare results.
+5. Ask it to call `commerce.create_quote` with each result's `merchantId` and `offerId`, then pay the selected unchanged signed quote through the wallet.
+
+Each quote carries its own merchant ID, signing identity, price, and expiry. Capture resolves the merchant's payable ledger account dynamically, so payments from the same consumer wallet settle independently to the merchant bound into each mandate. Per-merchant `/mcp/merchants/:merchantId` endpoints remain available for advanced direct integrations, but consumers do not need them.
+
+For a remote AI client, ChatGPT plugin, or hosted Codex environment, `localhost` will not work. Deploy the MCP and authorization endpoints behind public HTTPS and replace the sandbox identity store and deterministic keys with production IAM and KMS-backed signing.
+
 ## Implemented transaction slice
 
 ```text
-consumer MCP client -> merchant commerce MCP -> signed quote
+consumer MCP client -> PAYL commerce MCP -> registered merchant -> signed quote
 consumer MCP client -> PAYL wallet MCP -> policy + approval
 PAYL -> signed single-use mandate -> merchant commerce MCP
-merchant -> atomic capture + fulfillment -> signed order receipt
+digital download merchant -> atomic capture + fulfillment -> signed order receipt
+merchant -> async fulfillment -> pending revenue becomes payable + signed receipt
+consumer/system -> cancellation or expiry -> atomic release/reversal
+consumer -> policy-eligible full refund -> merchant gross debit + signed refund receipt
+merchant -> reserve-backed sandbox payout -> reconciliation report
 ```
 
-The current implementation includes Streamable HTTP MCP endpoints, strict shared schemas, Ed25519 JWS signatures, PostgreSQL transactions, a balanced double-entry sandbox ledger, quote-bound mandates, human approval, idempotent capture, audit events, consumer approval UI, merchant console, and a reference MCP client.
+The current implementation includes Streamable HTTP MCP endpoints, OAuth authorization code with PKCE, scoped and audience-bound access tokens, revocable client grants, password sessions, per-approval TOTP, tenant-isolated dashboards, strict shared schemas, Ed25519 JWS signatures, PostgreSQL transactions, a balanced double-entry sandbox ledger, quote-bound mandates, idempotent capture/cancellation/refund/payout operations, expiry and outbox workers, signed merchant webhooks, reconciliation, pilot metrics, audit exports, and a reference MCP client.
 
-The approval web session uses a clearly marked sandbox identity header. Replacing that boundary with OIDC/MFA and replacing deterministic development keys with KMS-backed signing are mandatory before any hosted or live-funds pilot.
+The local identity provider, seeded passwords, TOTP secret, and deterministic signing keys are development fixtures. Replacing them with independently reviewed IAM, account recovery, protected key storage, and production MFA is mandatory before any hosted or live-funds pilot.
 
 ## What “direct AI payment through MCP” means
 
-MCP carries the direct commerce interaction between the consumer's AI host and the merchant's MCP server. It does not itself settle money.
+MCP carries the commerce interaction between the consumer's AI host and PAYL's registered merchant network. It does not itself settle money.
 
-- **Direct interaction:** consumer AI ↔ merchant MCP server.
+- **One-time consumer connection:** consumer AI ↔ PAYL commerce MCP network.
+- **Dynamic merchant routing:** merchant registration and product publication make the merchant discoverable without consumer reconfiguration.
 - **Direct commercial agreement:** signed merchant quote ↔ signed consumer payment mandate.
 - **Money movement:** PAYL's ledger and a licensed bank, mobile-money, issuer, or payment partner.
 - **Merchant settlement:** merchant PAYL balance or payout to the merchant's bank account.

@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "demo": "tsx src/demo.ts",
-    "demo:auto": "tsx src/demo.ts --auto-approve",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json --noEmit"
   },

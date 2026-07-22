@@ -12,8 +12,7 @@ export const QuoteLineSchema = z.object({
   lineTotalMinor: MinorAmountSchema,
 });
 
-export const QuotePayloadSchema = z.object({
-  schemaVersion: z.literal("2026-07-01"),
+const QuotePayloadBaseSchema = z.object({
   merchantId: IdentifierSchema,
   merchantServerId: IdentifierSchema,
   quoteId: IdentifierSchema,
@@ -32,6 +31,26 @@ export const QuotePayloadSchema = z.object({
   createdAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
 });
+
+export const RefundPolicySchema = z.discriminatedUnion("refundable", [
+  z.object({
+    refundable: z.literal(false),
+    refundWindowMinutes: z.null(),
+  }),
+  z.object({
+    refundable: z.literal(true),
+    refundWindowMinutes: z.number().int().min(60).max(365 * 24 * 60),
+  }),
+]);
+export type RefundPolicy = z.infer<typeof RefundPolicySchema>;
+
+export const QuotePayloadSchema = z.discriminatedUnion("schemaVersion", [
+  QuotePayloadBaseSchema.extend({ schemaVersion: z.literal("2026-07-01") }),
+  QuotePayloadBaseSchema.extend({
+    schemaVersion: z.literal("2026-07-19"),
+    refundPolicy: RefundPolicySchema,
+  }),
+]);
 export type QuotePayload = z.infer<typeof QuotePayloadSchema>;
 
 export const SignedQuoteSchema = z.object({
@@ -66,8 +85,7 @@ export const PaymentMandateSchema = z.object({
 });
 export type PaymentMandate = z.infer<typeof PaymentMandateSchema>;
 
-export const ReceiptPayloadSchema = z.object({
-  schemaVersion: z.literal("2026-07-01"),
+const ReceiptPayloadBaseSchema = z.object({
   merchantId: IdentifierSchema,
   orderId: IdentifierSchema,
   quoteId: IdentifierSchema,
@@ -77,9 +95,20 @@ export const ReceiptPayloadSchema = z.object({
   currency: CurrencySchema,
   fulfillmentStatus: z.literal("fulfilled"),
   fulfillmentReference: IdentifierSchema,
-  refundEligibleUntil: z.string().datetime(),
   createdAt: z.string().datetime(),
 });
+
+export const ReceiptPayloadSchema = z.discriminatedUnion("schemaVersion", [
+  ReceiptPayloadBaseSchema.extend({
+    schemaVersion: z.literal("2026-07-01"),
+    refundEligibleUntil: z.string().datetime(),
+  }),
+  ReceiptPayloadBaseSchema.extend({
+    schemaVersion: z.literal("2026-07-19"),
+    refundable: z.boolean(),
+    refundEligibleUntil: z.string().datetime().nullable(),
+  }),
+]);
 export type ReceiptPayload = z.infer<typeof ReceiptPayloadSchema>;
 
 export const OrderReceiptSchema = z.object({
@@ -87,6 +116,46 @@ export const OrderReceiptSchema = z.object({
   jws: z.string().min(20),
 });
 export type OrderReceipt = z.infer<typeof OrderReceiptSchema>;
+
+export const OrderStatusSchema = z.object({
+  orderId: IdentifierSchema,
+  merchantId: IdentifierSchema,
+  paymentId: IdentifierSchema,
+  status: z.enum(["confirmed", "fulfilled", "fulfillment_failed", "cancelled", "refunded"]),
+  capturedAmountMinor: MinorAmountSchema,
+  platformFeeMinor: MinorAmountSchema,
+  currency: CurrencySchema,
+  fulfillmentDeadline: z.string().datetime().nullable(),
+  fulfillmentReference: IdentifierSchema.nullable(),
+  fulfilledAt: z.string().datetime().nullable(),
+  cancelledAt: z.string().datetime().nullable(),
+  receipt: OrderReceiptSchema.nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type OrderStatus = z.infer<typeof OrderStatusSchema>;
+
+export const RefundReceiptPayloadSchema = z.object({
+  schemaVersion: z.literal("2026-07-19"),
+  refundId: IdentifierSchema,
+  orderId: IdentifierSchema,
+  paymentId: IdentifierSchema,
+  consumerRef: IdentifierSchema,
+  merchantId: IdentifierSchema,
+  refundedAmountMinor: MinorAmountSchema,
+  retainedFeeMinor: MinorAmountSchema,
+  currency: CurrencySchema,
+  status: z.literal("refunded"),
+  reason: z.string().min(1).max(500).optional(),
+  createdAt: z.string().datetime(),
+});
+export type RefundReceiptPayload = z.infer<typeof RefundReceiptPayloadSchema>;
+
+export const RefundReceiptSchema = z.object({
+  payload: RefundReceiptPayloadSchema,
+  jws: z.string().min(20),
+});
+export type RefundReceipt = z.infer<typeof RefundReceiptSchema>;
 
 export const PaymentPrepareResultSchema = z.discriminatedUnion("status", [
   z.object({
