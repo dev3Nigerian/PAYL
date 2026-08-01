@@ -3,7 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
-export default function LoginForm({ demoEmail, demoPassword }: { demoEmail: string; demoPassword: string }) {
+export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefilled }: { demoEmail: string; demoPassword: string; apiOrigin: string; prefilled: boolean }) {
   const search = useSearchParams();
   const [email, setEmail] = useState(demoEmail);
   const [password, setPassword] = useState(demoPassword);
@@ -15,16 +15,22 @@ export default function LoginForm({ demoEmail, demoPassword }: { demoEmail: stri
     setBusy(true);
     setError("");
     try {
+      const requested = search.get("returnTo");
+      const oauthHandoff = Boolean(requested && isOAuthReturnTo(requested, apiOrigin));
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, oauthHandoff }),
       });
-      const body = await response.json() as { error?: { message?: string } };
+      const body = await response.json() as { handoffUrl?: string; error?: { message?: string } };
       if (!response.ok) throw new Error(body.error?.message ?? "Sign-in failed");
-      const requested = search.get("returnTo");
-      const returnTo = requested && safeReturnTo(requested) ? requested : "/";
-      window.location.assign(returnTo);
+      if (requested && isOAuthReturnTo(requested, apiOrigin) && body.handoffUrl) {
+        const handoff = new URL(body.handoffUrl);
+        handoff.searchParams.set("returnTo", requested);
+        window.location.assign(handoff);
+      } else {
+        window.location.assign(requested && isLocalReturnTo(requested) ? requested : "/");
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Sign-in failed");
       setBusy(false);
@@ -38,15 +44,18 @@ export default function LoginForm({ demoEmail, demoPassword }: { demoEmail: stri
     <label className="login-field"><span>Password</span><input aria-label="Password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
     {error && <p className="error">{error}</p>}
     <button className="primary-button login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
-    <p className="fineprint">Sandbox credentials are prefilled. Payment approval separately requires your six-digit authenticator code.</p>
+    <p className="fineprint">{prefilled ? "Local sandbox credentials are prefilled." : "Use the credentials supplied by the sandbox owner."} Payment approval separately requires your six-digit authenticator code.</p>
   </form></main>;
 }
 
-function safeReturnTo(value: string): boolean {
-  if (value.startsWith("/") && !value.startsWith("//")) return true;
+function isLocalReturnTo(value: string): boolean {
+  return value.startsWith("/") && !value.startsWith("//");
+}
+
+function isOAuthReturnTo(value: string, apiOrigin: string): boolean {
   try {
     const url = new URL(value);
-    return url.hostname === "localhost" && ["3000", "4100"].includes(url.port);
+    return url.origin === new URL(apiOrigin).origin && url.pathname === "/authorize";
   } catch {
     return false;
   }

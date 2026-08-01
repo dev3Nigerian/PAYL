@@ -10,6 +10,7 @@ import { IdentityService } from "../src/identity.js";
 const config = loadConfig({
   ...process.env,
   NODE_ENV: "test",
+  PAYL_DEPLOYMENT_PROFILE: "local_sandbox",
   DATABASE_URL: process.env.PAYL_TEST_DATABASE_URL ?? "postgresql://payl:payl_test_only@localhost:54330/payl_test",
   APPROVAL_WEB_URL: "http://localhost:3000",
   PAYL_ISSUER: "https://sandbox.payl.local",
@@ -30,6 +31,7 @@ beforeEach(async () => {
     `TRUNCATE TABLE
        oauth_revoked_access_tokens, oauth_refresh_tokens, oauth_grants, oauth_authorization_codes,
        oauth_consent_requests, oauth_clients, auth_sessions, auth_users,
+       auth_browser_handoffs,
        reconciliation_reports, outbox_events, merchant_webhook_endpoints, payout_batches,
        merchant_settlement_configs, order_cancellations, payment_cancellations,
        audit_events, refunds, orders, payment_mandates, approval_challenges, payment_intents, quotes,

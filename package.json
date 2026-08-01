@@ -16,6 +16,7 @@
     "db:migrate": "pnpm --filter @payl/api db:migrate",
     "demo": "pnpm --filter @payl/reference-agent demo",
     "auth:code": "pnpm --filter @payl/api auth:code",
+    "deploy:secrets": "node scripts/generate-hosted-secrets.mjs",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm db:test:up && pnpm --filter @payl/api test",
     "build": "pnpm -r build"

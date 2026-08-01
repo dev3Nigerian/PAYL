@@ -12,6 +12,8 @@ enabled_tools = [
   "wallet.get_policy",
   "payment.prepare",
   "payment.get_status",
+  "payment.cancel",
+  "payment.request_refund",
 ]
 
 [mcp_servers.payl_commerce]
@@ -27,4 +29,5 @@ enabled_tools = [
   "commerce.create_quote",
   "commerce.commit_order",
   "commerce.get_order",
+  "commerce.cancel_order",
 ]

@@ -9,7 +9,7 @@ import { DomainError } from "./errors.js";
 import { bearerToken, cookieValue, type AuthSession, type IdentityService, type UserRole } from "./identity.js";
 import { handleCommerceMcp, handleMerchantMcp, handleWalletMcp } from "./mcp.js";
 import { MCP_SCOPES, type PaylOAuthProvider, requireToolScope, toolScopeForRequest } from "./oauth.js";
-import type { PaylService } from "./service.js";
+import { DIGITAL_GOODS_TERMS_V1, type PaylService } from "./service.js";
 
 export function createApp(
   service: PaylService,
@@ -21,6 +21,11 @@ export function createApp(
   const mcpResource = new URL("/mcp", config.publicBaseUrl);
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResource);
   app.disable("x-powered-by");
+  if (config.deploymentProfile === "hosted_sandbox") app.set("trust proxy", 1);
+  app.use((_request, response, next) => {
+    response.setHeader("x-payl-environment", config.deploymentProfile);
+    next();
+  });
   app.use(pinoHttp({ redact: ["req.headers.authorization", "req.headers.cookie", "req.body.password", "req.body.mfaCode", "req.body.mandate.jws"] }));
   app.use(cors({
     origin: [config.approvalWebUrl, config.merchantWebUrl],
@@ -68,10 +73,14 @@ export function createApp(
   app.get("/healthz", async (_request, response) => {
     try {
       await service.assertReady();
-      response.json({ status: "ok", service: "payl-sandbox", railMode: "sandbox_ledger", identity: "session_oauth", database: "ready" });
+      response.json({ status: "ok", service: "payl-sandbox", environment: config.deploymentProfile, railMode: "sandbox_ledger", identity: "session_oauth", database: "ready" });
     } catch {
       response.status(503).json({ status: "unavailable", service: "payl-sandbox", database: "unavailable" });
     }
+  });
+
+  app.get("/terms/digital-goods-v1", (_request, response) => {
+    response.type("text/plain").send(DIGITAL_GOODS_TERMS_V1);
   });
 
   const bearer = requireBearerAuth({ verifier: oauth, resourceMetadataUrl });
@@ -145,6 +154,41 @@ export function createApp(
     } catch (error) {
       next(error);
     }
+  });
+  app.post("/api/auth/handoff", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity);
+      response.set("cache-control", "no-store").json({ handoffUrl: await identity.createBrowserHandoff(session) });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/api/auth/handoff", async (request, response, next) => {
+    try {
+      const returnTo = hostedAuthorizeReturnTo(request.query.returnTo, config);
+      const result = await identity.consumeBrowserHandoff(request.query.code);
+      response.cookie("payl_consumer_session", result.token, {
+        httpOnly: true,
+        secure: config.deploymentProfile === "hosted_sandbox",
+        sameSite: "lax",
+        path: "/",
+        maxAge: config.sessionTtlHours * 60 * 60_000,
+      });
+      response.set({ "cache-control": "no-store", "referrer-policy": "no-referrer" }).redirect(303, returnTo);
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get("/api/auth/browser-logout", async (request, response) => {
+    const token = cookieValue(request.header("cookie"), "payl_consumer_session");
+    if (token) await identity.revokeSession(token);
+    response.clearCookie("payl_consumer_session", {
+      httpOnly: true,
+      secure: config.deploymentProfile === "hosted_sandbox",
+      sameSite: "lax",
+      path: "/",
+    });
+    response.set("cache-control", "no-store").redirect(303, new URL("/login", config.approvalWebUrl).href);
   });
   app.get("/api/auth/session", async (request, response, next) => {
     try {
@@ -451,6 +495,20 @@ export function createApp(
   return app;
 }
 
+function hostedAuthorizeReturnTo(value: unknown, config: Config): string {
+  if (typeof value !== "string") throw new DomainError("HANDOFF_RETURN_INVALID", "OAuth return URL is required", 400);
+  let target: URL;
+  try {
+    target = new URL(value);
+  } catch {
+    throw new DomainError("HANDOFF_RETURN_INVALID", "OAuth return URL is invalid", 400);
+  }
+  if (target.origin !== new URL(config.publicBaseUrl).origin || target.pathname !== "/authorize") {
+    throw new DomainError("HANDOFF_RETURN_INVALID", "Browser handoff may return only to PAYL authorization", 400);
+  }
+  return target.href;
+}
+
 async function requireWebSession(request: Request, identity: IdentityService, role?: UserRole): Promise<AuthSession> {
   const session = await identity.authenticateSessionToken(requireSessionBearer(request));
   if (role && session.role !== role) throw new DomainError("FORBIDDEN", "This account cannot access the requested workspace", 403);
@@ -458,7 +516,7 @@ async function requireWebSession(request: Request, identity: IdentityService, ro
 }
 
 function requireSessionBearer(request: Request): string {
-  const token = bearerToken(request.header("authorization"));
+  const token = bearerToken(request.header("authorization")) ?? cookieValue(request.header("cookie"), "payl_consumer_session");
   if (!token) throw new DomainError("UNAUTHENTICATED", "Sign in to continue", 401);
   return token;
 }

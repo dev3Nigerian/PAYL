@@ -12,6 +12,7 @@ import { createApp } from "../src/app.js";
 const config = loadConfig({
   ...process.env,
   NODE_ENV: "test",
+  PAYL_DEPLOYMENT_PROFILE: "local_sandbox",
   DATABASE_URL: process.env.PAYL_TEST_DATABASE_URL ?? "postgresql://payl:payl_test_only@localhost:54330/payl_test",
   APPROVAL_WEB_URL: "http://localhost:3000",
   MERCHANT_WEB_URL: "http://localhost:3001",
@@ -34,6 +35,7 @@ beforeEach(async () => {
     `TRUNCATE TABLE
        oauth_revoked_access_tokens, oauth_refresh_tokens, oauth_grants, oauth_authorization_codes,
        oauth_consent_requests, oauth_clients, auth_sessions, auth_users,
+       auth_browser_handoffs,
        reconciliation_reports, outbox_events, merchant_webhook_endpoints, payout_batches,
        merchant_settlement_configs, order_cancellations, payment_cancellations,
        audit_events, refunds, orders, payment_mandates, approval_challenges, payment_intents, quotes,
@@ -72,6 +74,28 @@ describe("PAYL identity and MCP authorization", () => {
     const merchantToken = merchantLogin.body.sessionToken as string;
     await request(app).get("/api/merchant/dashboard").set("authorization", `Bearer ${merchantToken}`).expect(200);
     await request(app).get("/api/consumer/dashboard").set("authorization", `Bearer ${merchantToken}`).expect(403);
+  });
+
+  it("exchanges a single-use browser handoff for an API-origin OAuth session", async () => {
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail,
+      password: config.sandboxConsumerPassword,
+      role: "consumer",
+    }).expect(200);
+    const handoff = await request(app)
+      .post("/api/auth/handoff")
+      .set("authorization", `Bearer ${login.body.sessionToken as string}`)
+      .expect(200);
+    const handoffUrl = new URL(handoff.body.handoffUrl as string);
+    const returnTo = "http://localhost:4100/authorize?client_id=hosted-demo";
+    handoffUrl.searchParams.set("returnTo", returnTo);
+
+    const exchanged = await request(app).get(`${handoffUrl.pathname}${handoffUrl.search}`).expect(303);
+    expect(exchanged.headers.location).toBe(returnTo);
+    const cookies = exchanged.headers["set-cookie"] as unknown as string[];
+    expect(cookies[0]).toContain("payl_consumer_session=");
+    await request(app).get("/api/auth/session").set("Cookie", cookies).expect(200);
+    await request(app).get(`${handoffUrl.pathname}${handoffUrl.search}`).expect(401);
   });
 
   it("registers and provisions an isolated merchant workspace", async () => {

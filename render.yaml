@@ -1,0 +1,89 @@
+previews:
+  generation: off
+
+services:
+  - type: web
+    name: payl-api-dev3nigerian
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 30
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PAYL_DEPLOYMENT_PROFILE
+        value: hosted_sandbox
+      - key: PAYL_DEV_KEYS
+        value: "false"
+      - key: PAYL_SIGNING_MASTER_KEY
+        sync: false
+      - key: PAYL_SIGNING_KEY_ID
+        value: payl-hosted-sandbox-2026-01
+      - key: DATABASE_URL
+        sync: false
+      - key: PUBLIC_BASE_URL
+        value: https://payl-api-dev3nigerian.onrender.com
+      - key: PAYL_ISSUER
+        value: https://payl-api-dev3nigerian.onrender.com
+      - key: APPROVAL_WEB_URL
+        value: https://payl-consumer-dev3nigerian.onrender.com
+      - key: MERCHANT_WEB_URL
+        value: https://payl-merchant-dev3nigerian.onrender.com
+      - key: SANDBOX_BOOTSTRAP_ENABLED
+        value: "true"
+      - key: SANDBOX_CONSUMER_EMAIL
+        sync: false
+      - key: SANDBOX_CONSUMER_PASSWORD
+        sync: false
+      - key: SANDBOX_CONSUMER_TOTP_SECRET
+        sync: false
+      - key: SANDBOX_MERCHANT_EMAIL
+        sync: false
+      - key: SANDBOX_MERCHANT_PASSWORD
+        sync: false
+      - key: SANDBOX_QUOTE_TTL_MINUTES
+        value: "60"
+      - key: SANDBOX_APPROVAL_TTL_MINUTES
+        value: "45"
+      - key: SANDBOX_FULFILLMENT_TTL_MINUTES
+        value: "60"
+      - key: LIFECYCLE_WORKER_INTERVAL_MS
+        value: "2000"
+
+  - type: web
+    name: payl-consumer-dev3nigerian
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./apps/approval-web/Dockerfile
+    dockerContext: .
+    healthCheckPath: /login
+    maxShutdownDelaySeconds: 30
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PAYL_API_URL
+        value: https://payl-api-dev3nigerian.onrender.com
+      - key: PAYL_PREFILL_DEMO_CREDENTIALS
+        value: "false"
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+
+  - type: web
+    name: payl-merchant-dev3nigerian
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./apps/merchant-web/Dockerfile
+    dockerContext: .
+    healthCheckPath: /login
+    maxShutdownDelaySeconds: 30
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PAYL_API_URL
+        value: https://payl-api-dev3nigerian.onrender.com
+      - key: PAYL_PREFILL_DEMO_CREDENTIALS
+        value: "false"
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"

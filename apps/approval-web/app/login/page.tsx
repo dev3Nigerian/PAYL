@@ -2,7 +2,14 @@ import { Suspense } from "react";
 import LoginForm from "./login-form";
 
 export default function LoginPage() {
+  const prefilled = process.env.PAYL_PREFILL_DEMO_CREDENTIALS !== "false";
+  const apiOrigin = process.env.PAYL_API_URL ?? "http://localhost:4100";
   return <Suspense fallback={<main className="shell"><div className="card login-card">Loading sign-in…</div></main>}>
-    <LoginForm demoEmail={process.env.SANDBOX_CONSUMER_EMAIL ?? "consumer@payl.local"} demoPassword={process.env.SANDBOX_CONSUMER_PASSWORD ?? "ConsumerDemo!2026"} />
+    <LoginForm
+      demoEmail={prefilled ? process.env.SANDBOX_CONSUMER_EMAIL ?? "consumer@payl.local" : ""}
+      demoPassword={prefilled ? process.env.SANDBOX_CONSUMER_PASSWORD ?? "ConsumerDemo!2026" : ""}
+      apiOrigin={apiOrigin}
+      prefilled={prefilled}
+    />
   </Suspense>;
 }

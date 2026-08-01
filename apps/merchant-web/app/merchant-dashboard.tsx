@@ -22,6 +22,7 @@ export type MerchantState = {
     name: string;
     serverId: string;
     mcpUrl: string;
+    networkMcpUrl: string;
     currency: string;
     balances: { pendingFulfillment: string; payable: string; reserve: string };
     totals: {
@@ -330,7 +331,7 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
       {tab === "overview" && <>
         <section className={`merchant-balance ${merchantOwes ? "liability" : ""}`}><div><span>{merchantOwes ? "Amount owed to PAYL" : "Available for settlement"}</span><strong>{money(initialState.merchant?.balances.payable, currency)}</strong><small>{merchantOwes ? "Refunded purchase plus retained PAYL fee" : "Net merchant payable balance"}</small></div><div><span>Gross AI sales</span><strong>{money(initialState.merchant?.totals.grossSalesMinor, currency)}</strong><small>Before refunds and PAYL fees</small></div></section>
         <div className="metrics"><article><span>Completed orders</span><strong>{initialState.merchant?.totals.completedOrders ?? "0"}</strong></article><article><span>Awaiting fulfillment</span><strong>{initialState.merchant?.totals.pendingOrders ?? "0"}</strong></article><article><span>Quote conversion</span><strong>{initialState.metrics?.funnel.quoteToOrderPercent ?? 0}%</strong></article><article><span>Median approval</span><strong>{initialState.metrics?.approvals.medianSeconds ? `${Number(initialState.metrics.approvals.medianSeconds).toFixed(0)}s` : "—"}</strong></article><article><span>Ledger integrity</span><strong>{initialState.reconciliation?.reconciled ? "Reconciled" : "Review"}</strong></article></div>
-        <article className="mcp-card"><div><p className="eyebrow">PAYL commerce network</p><h2>Your catalog is automatically available to connected AI buyers</h2><code>http://localhost:4100/mcp/commerce</code><small>Optional direct endpoint: {initialState.merchant?.mcpUrl ?? "unavailable"} · Merchant ID: {initialState.merchant?.merchantId ?? "unavailable"}</small></div><button className="secondary-button" type="button" onClick={() => void copyMcpUrl()}>{copied ? "Copied" : "Copy direct endpoint"}</button></article>
+        <article className="mcp-card"><div><p className="eyebrow">PAYL commerce network</p><h2>Your catalog is automatically available to connected AI buyers</h2><code>{initialState.merchant?.networkMcpUrl ?? "unavailable"}</code><small>Optional direct endpoint: {initialState.merchant?.mcpUrl ?? "unavailable"} · Merchant ID: {initialState.merchant?.merchantId ?? "unavailable"}</small></div><button className="secondary-button" type="button" onClick={() => void copyMcpUrl()}>{copied ? "Copied" : "Copy direct endpoint"}</button></article>
         <article className="panel"><div className="panelhead"><h2>Latest AI orders</h2><button className="text-button" type="button" onClick={() => setTab("orders")}>View all</button></div><OrderTable state={initialState} onFulfill={(order) => void fulfillOrder(order)} fulfilling={fulfilling} /></article>
       </>}
 

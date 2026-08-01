@@ -18,7 +18,7 @@ import type {
   OAuthTokenRevocationRequest,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { createDeterministicDevKey, sha256Hex } from "@payl/crypto";
+import { createDeterministicDevKey, createSecretDerivedKey, sha256Hex, type SigningKey } from "@payl/crypto";
 import type { Config } from "./config.js";
 import type { AuthSession } from "./identity.js";
 import { DomainError, requireValue } from "./errors.js";
@@ -77,7 +77,7 @@ function publicRedirectAllowed(uri: string): boolean {
 
 export class PaylOAuthProvider implements OAuthServerProvider {
   readonly clientsStore: OAuthRegisteredClientsStore;
-  private readonly signingKey = createDeterministicDevKey("payl-oauth-access", "payl-oauth-sandbox-2026-01");
+  private readonly signingKey: SigningKey;
   private readonly issuer: string;
   private readonly resource: string;
 
@@ -85,6 +85,9 @@ export class PaylOAuthProvider implements OAuthServerProvider {
     private readonly pool: pg.Pool,
     private readonly config: Config,
   ) {
+    this.signingKey = config.signingMasterKey
+      ? createSecretDerivedKey(config.signingMasterKey, "payl-oauth-access", `${config.signingKeyId}:oauth`)
+      : createDeterministicDevKey("payl-oauth-access", "payl-oauth-sandbox-2026-01");
     this.issuer = new URL(config.publicBaseUrl).href;
     this.resource = new URL("/mcp", config.publicBaseUrl).href;
     this.clientsStore = {

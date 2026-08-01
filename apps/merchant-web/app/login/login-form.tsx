@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-export default function LoginForm({ demoEmail, demoPassword }: { demoEmail: string; demoPassword: string }) {
+export default function LoginForm({ demoEmail, demoPassword, prefilled }: { demoEmail: string; demoPassword: string; prefilled: boolean }) {
   const [email, setEmail] = useState(demoEmail);
   const [password, setPassword] = useState(demoPassword);
   const [error, setError] = useState("");
@@ -34,7 +34,7 @@ export default function LoginForm({ demoEmail, demoPassword }: { demoEmail: stri
     <label><span>Password</span><input aria-label="Password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
     {error && <p className="form-notice error">{error}</p>}
     <button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
-    <small>Sandbox credentials are prefilled for local testing.</small>
+    <small>{prefilled ? "Sandbox credentials are prefilled for local testing." : "Use the credentials supplied by the sandbox owner."}</small>
     <a className="auth-link" href="/register">Register another merchant</a>
   </form></main>;
 }

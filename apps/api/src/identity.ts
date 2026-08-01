@@ -207,15 +207,43 @@ export class IdentityService {
       throw new DomainError("INVALID_CREDENTIALS", "Email or password is incorrect", 401);
     }
 
-    const token = randomBytes(32).toString("base64url");
-    const sessionId = `session_${randomUUID()}`;
-    const expiresAt = new Date(Date.now() + this.config.sessionTtlHours * 60 * 60_000);
+    return this.createSession(user);
+  }
+
+  async createBrowserHandoff(session: AuthSession): Promise<string> {
+    if (session.role !== "consumer") throw new DomainError("FORBIDDEN", "Consumer access is required", 403);
+    const code = randomBytes(32).toString("base64url");
     await this.pool.query(
-      `INSERT INTO auth_sessions(id, user_id, token_hash, expires_at)
-       VALUES ($1, $2, $3, $4)`,
-      [sessionId, user.id, sha256(token), expiresAt],
+      `DELETE FROM auth_browser_handoffs
+       WHERE expires_at < now() OR consumed_at < now() - interval '1 day'`,
     );
-    return { session: this.sessionFromUser(user, sessionId, expiresAt), token };
+    await this.pool.query(
+      `INSERT INTO auth_browser_handoffs(code_hash, user_id, expires_at)
+       VALUES ($1, $2, now() + interval '2 minutes')`,
+      [sha256(code), session.userId],
+    );
+    const url = new URL("/api/auth/handoff", this.config.publicBaseUrl);
+    url.searchParams.set("code", code);
+    return url.href;
+  }
+
+  async consumeBrowserHandoff(code: unknown): Promise<{ session: AuthSession; token: string }> {
+    if (typeof code !== "string" || !/^[A-Za-z0-9_-]{40,80}$/.test(code)) {
+      throw new DomainError("HANDOFF_INVALID", "Browser sign-in handoff is invalid or expired", 401);
+    }
+    const handoff = (await this.pool.query<{ user_id: string }>(
+      `UPDATE auth_browser_handoffs SET consumed_at = now()
+       WHERE code_hash = $1 AND consumed_at IS NULL AND expires_at > now()
+       RETURNING user_id`,
+      [sha256(code)],
+    )).rows[0];
+    if (!handoff) throw new DomainError("HANDOFF_INVALID", "Browser sign-in handoff is invalid or expired", 401);
+    const user = (await this.pool.query<UserRow>(
+      "SELECT * FROM auth_users WHERE id = $1 AND status = 'active'",
+      [handoff.user_id],
+    )).rows[0];
+    if (!user) throw new DomainError("UNAUTHENTICATED", "Sign in to continue", 401);
+    return this.createSession(user);
   }
 
   async authenticateSessionToken(token: string): Promise<AuthSession> {
@@ -250,6 +278,18 @@ export class IdentityService {
       return expected.length === supplied.length && timingSafeEqual(expected, supplied);
     });
     if (!valid) throw new DomainError("MFA_INVALID", "Authenticator code is invalid or expired", 403);
+  }
+
+  private async createSession(user: UserRow): Promise<{ session: AuthSession; token: string }> {
+    const token = randomBytes(32).toString("base64url");
+    const sessionId = `session_${randomUUID()}`;
+    const expiresAt = new Date(Date.now() + this.config.sessionTtlHours * 60 * 60_000);
+    await this.pool.query(
+      `INSERT INTO auth_sessions(id, user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3, $4)`,
+      [sessionId, user.id, sha256(token), expiresAt],
+    );
+    return { session: this.sessionFromUser(user, sessionId, expiresAt), token };
   }
 
   async listGrants(userId: string): Promise<Array<Record<string, unknown>>> {

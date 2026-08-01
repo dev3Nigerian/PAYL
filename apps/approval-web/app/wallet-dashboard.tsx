@@ -203,8 +203,9 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
   }
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.assign("/login");
+    const response = await fetch("/api/auth/logout", { method: "POST" });
+    const body = await response.json() as { browserLogoutUrl?: string };
+    window.location.assign(body.browserLogoutUrl ?? "/login");
   }
 
   const headings: Record<Tab, [string, string]> = {

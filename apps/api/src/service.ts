@@ -21,6 +21,7 @@ import {
 } from "@payl/contracts";
 import {
   createDeterministicDevKey,
+  createSecretDerivedKey,
   sha256Hex,
   signPayload,
   verifyPayload,
@@ -29,6 +30,8 @@ import {
 import type { Config } from "./config.js";
 import { inTransaction } from "./db.js";
 import { DomainError, requireValue } from "./errors.js";
+
+export const DIGITAL_GOODS_TERMS_V1 = "PAYL sandbox digital goods terms v1. Simulated funds only. No live payment or settlement occurs.";
 
 type JournalLine = { accountId: string; amountMinor: bigint };
 
@@ -144,7 +147,7 @@ export class PaylService {
     private readonly pool: pg.Pool,
     private readonly config: Config,
   ) {
-    this.paylKey = createDeterministicDevKey("payl-mandate-issuer", "payl-sandbox-2026-01");
+    this.paylKey = this.signingKey("payl-mandate-issuer", "payl-sandbox-2026-01", "mandate");
   }
 
   async assertReady(): Promise<void> {
@@ -152,7 +155,13 @@ export class PaylService {
   }
 
   private merchantKey(merchantId: string): SigningKey {
-    return createDeterministicDevKey(`merchant:${merchantId}`, `${merchantId}-sandbox-2026-01`);
+    return this.signingKey(`merchant:${merchantId}`, `${merchantId}-sandbox-2026-01`, `merchant:${merchantId}`);
+  }
+
+  private signingKey(label: string, developmentKid: string, hostedSuffix: string): SigningKey {
+    return this.config.signingMasterKey
+      ? createSecretDerivedKey(this.config.signingMasterKey, label, `${this.config.signingKeyId}:${hostedSuffix}`)
+      : createDeterministicDevKey(label, developmentKid);
   }
 
   async seedSandbox(): Promise<void> {
@@ -161,7 +170,7 @@ export class PaylService {
         `INSERT INTO merchants(id, name, server_id, currency, signing_key_id, status)
          VALUES ($1, 'Atlas Digital Market', 'merchant_server_demo', 'NGN', $2, 'active')
          ON CONFLICT (id) DO NOTHING`,
-        [this.config.sandboxMerchantId, `${this.config.sandboxMerchantId}-sandbox-2026-01`],
+        [this.config.sandboxMerchantId, this.merchantKey(this.config.sandboxMerchantId).kid],
       );
       await client.query(
         `INSERT INTO consumers(id, display_name, status)
@@ -316,7 +325,7 @@ export class PaylService {
       fulfillmentMethod: offer.fulfillment_method,
       refundable: offer.refundable,
       refundWindowMinutes: offer.refund_window_minutes,
-      termsUri: "https://sandbox.payl.local/terms/digital-goods-v1",
+      termsUri: new URL("/terms/digital-goods-v1", this.config.publicBaseUrl).href,
     };
   }
 
@@ -491,8 +500,8 @@ export class PaylService {
       currency: offer.currency,
       fulfillmentMethod: offer.fulfillment_method,
       estimatedCompletion: "immediate",
-      termsUri: "https://sandbox.payl.local/terms/digital-goods-v1",
-      termsHash: sha256Hex("PAYL sandbox digital goods terms v1"),
+      termsUri: new URL("/terms/digital-goods-v1", this.config.publicBaseUrl).href,
+      termsHash: sha256Hex(DIGITAL_GOODS_TERMS_V1),
       refundPolicy: {
         refundable: offer.refundable,
         refundWindowMinutes: offer.refund_window_minutes,
@@ -1929,6 +1938,7 @@ export class PaylService {
             name: merchant.rows[0].name,
             serverId: merchant.rows[0].server_id,
             mcpUrl: new URL(`/mcp/merchants/${merchant.rows[0].id}`, this.config.publicBaseUrl).href,
+            networkMcpUrl: new URL("/mcp/commerce", this.config.publicBaseUrl).href,
             currency: merchant.rows[0].currency,
             balances: {
               pendingFulfillment: merchant.rows[0].pending_payable_minor,
