@@ -331,4 +331,27 @@ describe("PAYL identity and MCP authorization", () => {
       .send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "wallet.get_summary", arguments: {} } })
       .expect(401);
   });
+
+  it("accepts Cursor desktop OAuth callbacks while rejecting arbitrary custom schemes", async () => {
+    const cursorRegistration = await request(app).post("/register").send({
+      client_name: "Cursor desktop",
+      redirect_uris: [
+        "cursor://anysphere.cursor-mcp/oauth/callback",
+        "https://www.cursor.com/agents/mcp/oauth/callback",
+        "http://localhost:8787/callback",
+      ],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }).expect(201);
+    expect(cursorRegistration.body.client_id).toBeTruthy();
+
+    await request(app).post("/register").send({
+      client_name: "Unknown custom client",
+      redirect_uris: ["payl://unexpected/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }).expect(400);
+  });
 });

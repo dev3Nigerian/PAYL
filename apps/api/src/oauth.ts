@@ -80,6 +80,22 @@ function scopeCopy(scope: string): { label: string; description: string } {
 function publicRedirectAllowed(uri: string): boolean {
   try {
     const url = new URL(uri);
+    // Cursor desktop versions in the wild use this registered-app callback
+    // scheme in addition to HTTPS and localhost loopback callbacks. Keep the
+    // custom scheme narrowly scoped to Cursor's documented callback instead of
+    // accepting arbitrary non-HTTP schemes.
+    if (
+      url.protocol === "cursor:" &&
+      url.hostname === "anysphere.cursor-mcp" &&
+      url.pathname === "/oauth/callback" &&
+      !url.username &&
+      !url.password &&
+      !url.port &&
+      !url.search &&
+      !url.hash
+    ) {
+      return true;
+    }
     return url.protocol === "https:" ||
       ((url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]") && url.protocol === "http:");
   } catch {
@@ -114,7 +130,7 @@ export class PaylOAuthProvider implements OAuthServerProvider {
         const generated = client as OAuthClientInformationFull;
         if (!generated.client_id) throw new InvalidRequestError("Generated client_id is required");
         if (!client.redirect_uris.every(publicRedirectAllowed)) {
-          throw new InvalidRequestError("Redirect URIs must use HTTPS or an HTTP loopback address");
+          throw new InvalidRequestError("Redirect URIs must use HTTPS, an HTTP loopback address, or a supported desktop MCP callback");
         }
         const normalized: OAuthClientInformationFull = {
           ...generated,
