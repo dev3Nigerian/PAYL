@@ -179,7 +179,7 @@ describe("PAYL identity and MCP authorization", () => {
       .set("authorization", `Bearer ${consumerLogin.body.sessionToken as string}`)
       .send({ idempotencyKey: "refund-api-001", reason: "Consumer API test" })
       .expect(201);
-    expect(refund.body.payload).toMatchObject({ orderId: order.orderId, status: "refunded", retainedFeeMinor: "15000" });
+    expect(refund.body.payload).toMatchObject({ orderId: order.orderId, status: "refunded", retainedFeeMinor: "150" });
 
     const merchantLogin = await request(app).post("/api/auth/login").send({
       email: config.sandboxMerchantEmail,
@@ -203,7 +203,7 @@ describe("PAYL identity and MCP authorization", () => {
       merchantId: networkMerchant.merchant.merchantId,
       name: "Network Comparison Service",
       description: "A service discovered without adding another MCP connection.",
-      priceMinor: "175000",
+      priceMinor: "17500",
       fulfillmentMethod: "digital_service",
     });
     const login = await request(app).post("/api/auth/login").send({
