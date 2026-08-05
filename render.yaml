@@ -10,7 +10,6 @@ services:
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
     healthCheckPath: /healthz
-    maxShutdownDelaySeconds: 30
     autoDeployTrigger: checksPass
     envVars:
       - key: PAYL_DEPLOYMENT_PROFILE
@@ -60,7 +59,6 @@ services:
     dockerfilePath: ./apps/approval-web/Dockerfile
     dockerContext: .
     healthCheckPath: /login
-    maxShutdownDelaySeconds: 30
     autoDeployTrigger: checksPass
     envVars:
       - key: PAYL_API_URL
@@ -78,7 +76,6 @@ services:
     dockerfilePath: ./apps/merchant-web/Dockerfile
     dockerContext: .
     healthCheckPath: /login
-    maxShutdownDelaySeconds: 30
     autoDeployTrigger: checksPass
     envVars:
       - key: PAYL_API_URL
