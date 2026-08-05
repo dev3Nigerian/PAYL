@@ -14,7 +14,7 @@ type Approval = {
 };
 
 function money(amountMinor: string, currency: string): string {
-  return new Intl.NumberFormat("en-NG", { style: "currency", currency }).format(Number(amountMinor) / 100);
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(amountMinor) / 100);
 }
 
 export default function ApprovalClient({ approvalId }: { approvalId: string }) {

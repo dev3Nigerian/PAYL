@@ -55,8 +55,8 @@ const tabs: Array<{ id: Tab; label: string }> = [
   { id: "security", label: "Security" },
 ];
 
-function money(amountMinor: string | undefined, currency = "NGN"): string {
-  return new Intl.NumberFormat("en-NG", { style: "currency", currency }).format(Number(amountMinor ?? "0") / 100);
+function money(amountMinor: string | undefined, currency = "USD"): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(amountMinor ?? "0") / 100);
 }
 
 function majorUnits(amountMinor: string): string {
@@ -70,12 +70,12 @@ function minorUnits(value: string): string {
 }
 
 function refundLabel(order: WalletState["orders"][number]): string {
-  if (order.status === "confirmed") return order.fulfillment_deadline ? `Awaiting merchant fulfillment by ${new Date(order.fulfillment_deadline).toLocaleString("en-NG")}` : "Awaiting merchant fulfillment";
+  if (order.status === "confirmed") return order.fulfillment_deadline ? `Awaiting merchant fulfillment by ${new Date(order.fulfillment_deadline).toLocaleString("en-US")}` : "Awaiting merchant fulfillment";
   if (order.status === "cancelled") return order.cancellation_reason ?? "Cancelled before fulfillment";
-  if (order.status === "refunded") return `Refunded${order.refunded_at ? ` ${new Date(order.refunded_at).toLocaleString("en-NG")}` : ""}`;
+  if (order.status === "refunded") return `Refunded${order.refunded_at ? ` ${new Date(order.refunded_at).toLocaleString("en-US")}` : ""}`;
   if (!order.refundable || !order.refund_eligible_until) return "Not refundable";
   if (new Date(order.refund_eligible_until).getTime() < Date.now()) return "Refund window ended";
-  return `Refundable until ${new Date(order.refund_eligible_until).toLocaleString("en-NG")}`;
+  return `Refundable until ${new Date(order.refund_eligible_until).toLocaleString("en-US")}`;
 }
 
 function ActivityList({
@@ -95,7 +95,7 @@ function ActivityList({
   return <div className="activity-list">{state.orders.map((order) => (
     <div className="activity-row" key={order.id}>
       <div className={order.status === "refunded" || order.status === "cancelled" ? "activity-icon refunded" : "activity-icon"}>{order.status === "refunded" ? "RF" : order.status === "cancelled" ? "CX" : "AI"}</div>
-      <div><strong>{order.offer_name ?? order.merchant_name}</strong><span>{order.merchant_name} · {new Date(order.created_at).toLocaleString("en-NG")}</span><small className="refund-detail">{refundLabel(order)}</small></div>
+      <div><strong>{order.offer_name ?? order.merchant_name}</strong><span>{order.merchant_name} · {new Date(order.created_at).toLocaleString("en-US")}</span><small className="refund-detail">{refundLabel(order)}</small></div>
       <div className="activity-amount"><strong>{order.status === "refunded" || order.status === "cancelled" ? "+" : "-"}{money(order.captured_amount_minor, order.currency)}</strong><span>{order.status.replaceAll("_", " ")}</span>{order.status === "confirmed" && <button className="refund-button" type="button" disabled={cancelling === order.id} onClick={() => onCancel(order)}>{cancelling === order.id ? "Cancelling…" : "Cancel order"}</button>}{order.status === "fulfilled" && order.refundable && order.refund_eligible_until && new Date(order.refund_eligible_until).getTime() >= Date.now() && <button className="refund-button" type="button" disabled={refunding === order.id} onClick={() => onRefund(order)}>{refunding === order.id ? "Refunding…" : "Refund purchase"}</button>}</div>
     </div>
   ))}</div>;
@@ -239,7 +239,7 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
 
         {tab === "wallet" && <>
           <section className="wallet-hero">
-            <div><span>Available balance</span><strong>{money(initialState?.wallet.balances.available, initialState?.wallet.currency)}</strong><small>{initialState?.wallet.currency ?? "NGN"} · Sandbox ledger</small></div>
+            <div><span>Available balance</span><strong>{money(initialState?.wallet.balances.available, initialState?.wallet.currency)}</strong><small>{initialState?.wallet.currency ?? "USD"} · Sandbox ledger</small></div>
             <div className="reserved"><span>Reserved by agents</span><strong>{money(initialState?.wallet.balances.reserved, initialState?.wallet.currency)}</strong><small>Released if a mandate expires</small></div>
           </section>
           <section className="wallet-grid">
@@ -268,9 +268,9 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
             <p className="section-label">Effective policy · v{policy?.version ?? "—"}</p>
             <h2>Agent spending limits</h2>
             <p className="form-intro">These limits are enforced by the wallet before any funds are reserved. Changes apply to future payment requests.</p>
-            <label><span>Auto-approve up to</span><div className="money-input"><b>₦</b><input aria-label="Auto-approve limit" inputMode="decimal" min="0" step="0.01" value={draft.autoApprove} onChange={(event) => setDraft({ ...draft, autoApprove: event.target.value })} /></div><small>Payments above this amount require your approval.</small></label>
-            <label><span>Maximum per transaction</span><div className="money-input"><b>₦</b><input aria-label="Per-transaction limit" inputMode="decimal" min="0.01" step="0.01" value={draft.perTransaction} onChange={(event) => setDraft({ ...draft, perTransaction: event.target.value })} /></div><small>PAYL declines any single payment above this limit.</small></label>
-            <label><span>Maximum per day</span><div className="money-input"><b>₦</b><input aria-label="Daily limit" inputMode="decimal" min="0.01" step="0.01" value={draft.daily} onChange={(event) => setDraft({ ...draft, daily: event.target.value })} /></div><small>Captured payments reset against this limit each day.</small></label>
+            <label><span>Auto-approve up to</span><div className="money-input"><b>$</b><input aria-label="Auto-approve limit" inputMode="decimal" min="0" step="0.01" value={draft.autoApprove} onChange={(event) => setDraft({ ...draft, autoApprove: event.target.value })} /></div><small>Payments above this amount require your approval.</small></label>
+            <label><span>Maximum per transaction</span><div className="money-input"><b>$</b><input aria-label="Per-transaction limit" inputMode="decimal" min="0.01" step="0.01" value={draft.perTransaction} onChange={(event) => setDraft({ ...draft, perTransaction: event.target.value })} /></div><small>PAYL declines any single payment above this limit.</small></label>
+            <label><span>Maximum per day</span><div className="money-input"><b>$</b><input aria-label="Daily limit" inputMode="decimal" min="0.01" step="0.01" value={draft.daily} onChange={(event) => setDraft({ ...draft, daily: event.target.value })} /></div><small>Captured payments reset against this limit each day.</small></label>
             {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
             <button className="primary-button" type="submit" disabled={saving || !policy}>{saving ? "Saving…" : "Save policy"}</button>
           </form>
@@ -282,7 +282,7 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
         <article className="dashboard-panel connections-panel">
           <div className="panel-title"><div><p className="section-label">OAuth grants</p><h2>Connected AI clients</h2></div><span>{connections.length} active</span></div>
           {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
-          {connections.length === 0 ? <p className="empty-state">No AI clients are connected. Add PAYL through an OAuth-capable MCP client to create a scoped grant.</p> : <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={`${connection.clientId}:${connection.resource}`}><div><strong>{connection.clientName}</strong><span>{connection.scopes.join(" · ")}</span><small>Connected {new Date(connection.connectedAt).toLocaleString("en-NG")}</small></div><button className="secondary-button" type="button" onClick={() => void revokeConnection(connection.clientId, connection.resource)}>Revoke</button></div>)}</div>}
+          {connections.length === 0 ? <p className="empty-state">No AI clients are connected. Add PAYL through an OAuth-capable MCP client to create a scoped grant.</p> : <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={`${connection.clientId}:${connection.resource}`}><div><strong>{connection.clientName}</strong><span>{connection.scopes.join(" · ")}</span><small>Connected {new Date(connection.connectedAt).toLocaleString("en-US")}</small></div><button className="secondary-button" type="button" onClick={() => void revokeConnection(connection.clientId, connection.resource)}>Revoke</button></div>)}</div>}
         </article></>}
 
         {tab === "security" && <section className="security-grid section-panel">

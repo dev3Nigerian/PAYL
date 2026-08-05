@@ -76,8 +76,8 @@ const tabs: Array<{ id: Tab; label: string }> = [
   { id: "settlement", label: "Settlement" },
 ];
 
-function money(amountMinor: string | undefined, currency = "NGN"): string {
-  return new Intl.NumberFormat("en-NG", { style: "currency", currency }).format(Number(amountMinor ?? "0") / 100);
+function money(amountMinor: string | undefined, currency = "USD"): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(amountMinor ?? "0") / 100);
 }
 
 function minorUnits(value: string): string {
@@ -110,8 +110,8 @@ function refundTerms(offer: Offer): string {
 function OrderTable({ state, onFulfill, fulfilling }: { state: MerchantState; onFulfill: (order: MerchantState["orders"][number]) => void; fulfilling: string | null }) {
   if (state.orders.length === 0) return <p className="empty">No paid orders yet. Products become orders after an AI checkout completes.</p>;
   return <div className="table">{state.orders.map((order) => <div className="row" key={order.id}>
-    <div><strong>{order.offer_name ?? "Digital product"}</strong><span className="mono">{order.id}</span><small>{new Date(order.created_at).toLocaleString("en-NG")}</small></div>
-    <span>{money(order.captured_amount_minor, order.currency)}{order.status === "refunded" && <small>PAYL fee retained: {money(order.retained_fee_minor ?? "0", order.currency)}</small>}{order.status === "confirmed" && order.fulfillment_deadline && <small>Due {new Date(order.fulfillment_deadline).toLocaleString("en-NG")}</small>}</span><span className={order.status === "refunded" || order.status === "cancelled" ? "complete refunded" : "complete"}>{order.status.replaceAll("_", " ")}{order.status === "confirmed" && <button className="secondary-button" type="button" disabled={fulfilling === order.id} onClick={() => onFulfill(order)}>{fulfilling === order.id ? "Fulfilling…" : "Mark fulfilled"}</button>}</span>
+    <div><strong>{order.offer_name ?? "Digital product"}</strong><span className="mono">{order.id}</span><small>{new Date(order.created_at).toLocaleString("en-US")}</small></div>
+    <span>{money(order.captured_amount_minor, order.currency)}{order.status === "refunded" && <small>PAYL fee retained: {money(order.retained_fee_minor ?? "0", order.currency)}</small>}{order.status === "confirmed" && order.fulfillment_deadline && <small>Due {new Date(order.fulfillment_deadline).toLocaleString("en-US")}</small>}</span><span className={order.status === "refunded" || order.status === "cancelled" ? "complete refunded" : "complete"}>{order.status.replaceAll("_", " ")}{order.status === "confirmed" && <button className="secondary-button" type="button" disabled={fulfilling === order.id} onClick={() => onFulfill(order)}>{fulfilling === order.id ? "Fulfilling…" : "Mark fulfilled"}</button>}</span>
   </div>)}</div>;
 }
 
@@ -141,7 +141,7 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
   const [webhookUrl, setWebhookUrl] = useState(initialState.webhook?.url ?? "");
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
-  const currency = initialState.merchant?.currency ?? "NGN";
+  const currency = initialState.merchant?.currency ?? "USD";
   const merchantOwes = Number(initialState.merchant?.balances.payable ?? "0") < 0;
 
   async function createProduct(event: FormEvent<HTMLFormElement>) {
@@ -345,7 +345,7 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
         {showCreate && <form className="product-form" onSubmit={createProduct}>
           <label><span>Product name</span><input required minLength={2} maxLength={120} placeholder="e.g. Campaign Audit" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
           <label className="wide"><span>Description</span><textarea required minLength={5} maxLength={500} placeholder="Describe exactly what the buyer receives." value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
-          <label><span>Price</span><div className="money-input"><b>₦</b><input required inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} /></div></label>
+          <label><span>Price</span><div className="money-input"><b>$</b><input required inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} /></div></label>
           <label><span>Fulfillment</span><select value={draft.fulfillmentMethod} onChange={(event) => setDraft({ ...draft, fulfillmentMethod: event.target.value as Offer["fulfillmentMethod"] })}><option value="digital_service">Digital service</option><option value="digital_download">Digital download</option></select></label>
           <label className="wide checkbox-field"><input type="checkbox" checked={draft.refundable} onChange={(event) => setDraft({ ...draft, refundable: event.target.checked })} /><span>Consumers can refund this product</span></label>
           {draft.refundable && <><label><span>Refund window</span><input required type="number" min="1" step="1" value={draft.refundValue} onChange={(event) => setDraft({ ...draft, refundValue: event.target.value })} /></label><label><span>Window unit</span><select value={draft.refundUnit} onChange={(event) => setDraft({ ...draft, refundUnit: event.target.value as "hours" | "days" })}><option value="hours">Hours after purchase</option><option value="days">Days after purchase</option></select></label></>}
@@ -371,7 +371,7 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
         <article className="panel settlement-detail"><div><span>Expected merchant position</span><strong>{money(initialState.reconciliation?.expectedPositionMinor, currency)}</strong></div><div><span>Actual ledger position</span><strong>{money(initialState.reconciliation?.actualPositionMinor, currency)}</strong></div><div><span>Difference</span><strong>{money(initialState.reconciliation?.differenceMinor, currency)}</strong></div><div><span>Webhook queue</span><strong>{initialState.metrics?.operations.pending_webhooks ?? "0"} pending · {initialState.metrics?.operations.dead_webhooks ?? "0"} dead</strong></div><button className="secondary-button" type="button" onClick={() => void saveReconciliation()}>Save reconciliation snapshot</button></article>
         <form className="panel product-form" onSubmit={saveWebhook}><div className="wide"><p className="eyebrow">Signed operational callbacks</p><h2>Merchant webhook</h2><small>PAYL signs each JSON delivery with HMAC-SHA256 in x-payl-signature and retries failures up to eight times.</small></div><label className="wide"><span>HTTPS endpoint</span><input type="url" required placeholder="https://merchant.example/payl/events" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} /></label><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : initialState.webhook ? "Rotate secret and update" : "Enable webhook"}</button></form>
         {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
-        <article className="panel"><div className="panelhead"><div><p className="eyebrow">Payout history</p><h2>Sandbox batches</h2></div><span>{initialState.payouts?.length ?? 0} total</span></div>{(initialState.payouts?.length ?? 0) === 0 ? <p className="empty">No payouts yet.</p> : <div className="table">{initialState.payouts.map((payout) => <div className="row" key={payout.payoutId}><div><strong>{payout.payoutId}</strong><small>{new Date(payout.createdAt).toLocaleString("en-NG")}</small></div><span>{money(payout.paidAmountMinor, payout.currency)}<small>Reserve held: {money(payout.reserveHeldMinor, payout.currency)}</small></span><span className="complete">{payout.status}</span></div>)}</div>}</article>
+        <article className="panel"><div className="panelhead"><div><p className="eyebrow">Payout history</p><h2>Sandbox batches</h2></div><span>{initialState.payouts?.length ?? 0} total</span></div>{(initialState.payouts?.length ?? 0) === 0 ? <p className="empty">No payouts yet.</p> : <div className="table">{initialState.payouts.map((payout) => <div className="row" key={payout.payoutId}><div><strong>{payout.payoutId}</strong><small>{new Date(payout.createdAt).toLocaleString("en-US")}</small></div><span>{money(payout.paidAmountMinor, payout.currency)}<small>Reserve held: {money(payout.reserveHeldMinor, payout.currency)}</small></span><span className="complete">{payout.status}</span></div>)}</div>}</article>
       </section>}
     </section>
   </main>;

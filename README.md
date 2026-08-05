@@ -55,7 +55,7 @@ pnpm test
 pnpm build
 ```
 
-The database is preloaded with ₦100,000 of simulated consumer funds. No real money, card data, bank credentials, or reusable approval credentials are used.
+The database is preloaded with $1,000 of simulated consumer funds. No real money, card data, bank credentials, or reusable approval credentials are used. Fresh sandbox databases use USD; recreate an existing local sandbox database to remove historical signed artifacts.
 
 ## Hosting the public sandbox
 
@@ -82,7 +82,7 @@ The consumer dashboard has working navigation for wallet balance, activity, AI p
 
 Policy updates are versioned and enforced by the wallet when `payment.prepare` is called. The auto-approve limit cannot exceed the transaction limit, and the transaction limit cannot exceed the daily limit.
 
-The merchant dashboard supports merchant self-registration at `http://localhost:3001/register` and multiple products under **Products**. Registration atomically provisions an isolated merchant identity, NGN payable account, product catalog, signing identity, and merchant-specific MCP endpoint. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, can mark it refundable for 1 hour through 365 days, and can publish or hide it. Refund terms are signed into each quote, so later product changes do not alter an existing order. Published products immediately appear in `commerce.search_offers` through that merchant's MCP server.
+The merchant dashboard supports merchant self-registration at `http://localhost:3001/register` and multiple products under **Products**. Registration atomically provisions an isolated merchant identity, USD payable account, product catalog, signing identity, and merchant-specific MCP endpoint. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, can mark it refundable for 1 hour through 365 days, and can publish or hide it. Refund terms are signed into each quote, so later product changes do not alter an existing order. Published products immediately appear in `commerce.search_offers` through that merchant's MCP server.
 
 Merchants do not manually create a paid order. Orders are generated from authorized checkout so the merchant cannot accidentally record an unpaid sale:
 

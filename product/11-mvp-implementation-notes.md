@@ -2,7 +2,7 @@
 
 ## Delivered boundary
 
-The repository implements the first complete consumer-to-multiple-merchant MCP transaction slice using simulated NGN funds:
+The repository implements the first complete consumer-to-multiple-merchant MCP transaction slice using simulated USD funds:
 
 1. A consumer MCP host connects once to the PAYL commerce network and PAYL wallet server.
 2. The merchant creates an Ed25519-signed, expiring quote.
@@ -70,7 +70,7 @@ All MCP surfaces use OAuth authorization code with PKCE, a shared audience-bound
 - Identity uses seeded local password accounts rather than an external production IAM provider.
 - Approval requires TOTP, but the sandbox TOTP seed is intentionally public for local testing.
 - Development signing keys are deterministic and not KMS-backed.
-- One seeded consumer and merchant are provided; additional sandbox merchants can self-register. NGN and fixed-price digital fulfillment remain the supported boundary.
+- One seeded consumer and merchant are provided; additional sandbox merchants can self-register. USD and fixed-price digital fulfillment remain the supported boundary.
 - Partial refunds, payout failure/return, external merchant-debt collection, and bank-file reconciliation remain outside the sandbox boundary.
 
 These limitations prevent accidental presentation of the sandbox as a production payment system.

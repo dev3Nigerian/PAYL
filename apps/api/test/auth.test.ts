@@ -114,7 +114,7 @@ describe("PAYL identity and MCP authorization", () => {
     expect(dashboard.body.merchant).toMatchObject({
       merchantId,
       name: "Second Signal Studio",
-      currency: "NGN",
+      currency: "USD",
       mcpUrl: `http://localhost:4100/mcp/merchants/${merchantId}`,
     });
     expect(dashboard.body.offers).toEqual([]);

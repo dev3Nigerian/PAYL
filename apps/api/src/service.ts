@@ -168,7 +168,7 @@ export class PaylService {
     await inTransaction(this.pool, async (client) => {
       await client.query(
         `INSERT INTO merchants(id, name, server_id, currency, signing_key_id, status)
-         VALUES ($1, 'Atlas Digital Market', 'merchant_server_demo', 'NGN', $2, 'active')
+         VALUES ($1, 'Atlas Digital Market', 'merchant_server_demo', 'USD', $2, 'active')
          ON CONFLICT (id) DO NOTHING`,
         [this.config.sandboxMerchantId, this.merchantKey(this.config.sandboxMerchantId).kid],
       );
@@ -181,27 +181,27 @@ export class PaylService {
       await client.query(
         `INSERT INTO offers(id, merchant_id, name, description, price_minor, currency, fulfillment_method, refundable, refund_window_minutes)
          VALUES
-           ('offer_research_pack', $1, 'Market Research Pack', 'A fixed-scope digital research brief delivered immediately.', 750000, 'NGN', 'digital_download', true, 10080),
-           ('offer_brand_review', $1, 'AI Brand Review', 'A deterministic ten-point brand review delivered as a PDF.', 1250000, 'NGN', 'digital_service', true, 10080)
+           ('offer_research_pack', $1, 'Market Research Pack', 'A fixed-scope digital research brief delivered immediately.', 7500, 'USD', 'digital_download', true, 10080),
+           ('offer_brand_review', $1, 'AI Brand Review', 'A deterministic ten-point brand review delivered as a PDF.', 12500, 'USD', 'digital_service', true, 10080)
          ON CONFLICT (id) DO NOTHING`,
         [this.config.sandboxMerchantId],
       );
       await client.query(
         `INSERT INTO spending_policies(
            consumer_id, version, auto_approve_limit_minor, per_transaction_limit_minor, daily_limit_minor, currency
-         ) VALUES ($1, 1, 500000, 5000000, 10000000, 'NGN')
+         ) VALUES ($1, 1, 5000, 50000, 100000, 'USD')
          ON CONFLICT (consumer_id) DO NOTHING`,
         [this.config.sandboxConsumerId],
       );
 
       const accounts = [
-        ["acct_consumer_available", "consumer", this.config.sandboxConsumerId, "available", "NGN"],
-        ["acct_consumer_reserved", "consumer", this.config.sandboxConsumerId, "reserved", "NGN"],
-        ["acct_merchant_payable", "merchant", this.config.sandboxMerchantId, "payable", "NGN"],
-        [`acct_${this.config.sandboxMerchantId}_pending_payable`, "merchant", this.config.sandboxMerchantId, "pending_payable", "NGN"],
-        [`acct_${this.config.sandboxMerchantId}_reserve`, "merchant", this.config.sandboxMerchantId, "reserve", "NGN"],
-        ["acct_platform_clearing", "platform", "payl", "clearing", "NGN"],
-        ["acct_platform_fee", "platform", "payl", "fee_revenue", "NGN"],
+        ["acct_consumer_available", "consumer", this.config.sandboxConsumerId, "available", "USD"],
+        ["acct_consumer_reserved", "consumer", this.config.sandboxConsumerId, "reserved", "USD"],
+        ["acct_merchant_payable", "merchant", this.config.sandboxMerchantId, "payable", "USD"],
+        [`acct_${this.config.sandboxMerchantId}_pending_payable`, "merchant", this.config.sandboxMerchantId, "pending_payable", "USD"],
+        [`acct_${this.config.sandboxMerchantId}_reserve`, "merchant", this.config.sandboxMerchantId, "reserve", "USD"],
+        ["acct_platform_clearing", "platform", "payl", "clearing", "USD"],
+        ["acct_platform_fee", "platform", "payl", "fee_revenue", "USD"],
       ] as const;
       for (const account of accounts) {
         await client.query(
@@ -223,8 +223,8 @@ export class PaylService {
         referenceType: "consumer",
         referenceId: this.config.sandboxConsumerId,
         lines: [
-          { accountId: "acct_consumer_available", amountMinor: 10_000_000n },
-          { accountId: "acct_platform_clearing", amountMinor: -10_000_000n },
+          { accountId: "acct_consumer_available", amountMinor: 100_000n },
+          { accountId: "acct_platform_clearing", amountMinor: -100_000n },
         ],
       });
     });
@@ -555,7 +555,7 @@ export class PaylService {
       consumerRef: consumer.id,
       displayName: consumer.display_name,
       status: consumer.status,
-      currency: "NGN",
+      currency: "USD",
       balances: Object.fromEntries(balances.rows.map((row) => [row.account_type, row.balance_minor])),
     };
   }
@@ -1468,7 +1468,7 @@ export class PaylService {
     const balances = Object.fromEntries(accounts.rows.map((account) => [account.account_type, account.balance]));
     const expected = asBigInt(row.captures) - asBigInt(row.cancelled_net) - asBigInt(row.refunds) - asBigInt(row.payouts);
     const actual = accounts.rows.reduce((sum, account) => sum + asBigInt(account.balance), 0n);
-    const currency = accounts.rows[0]?.currency ?? "NGN";
+    const currency = accounts.rows[0]?.currency ?? "USD";
     const report = {
       merchantId,
       currency,

@@ -136,7 +136,7 @@ export class IdentityService {
     const merchantId = `merchant_${suffix}`;
     const userId = `user_${randomUUID().replaceAll("-", "")}`;
     const serverId = `merchant_server_${suffix}`;
-    const currency = "NGN";
+    const currency = "USD";
     const password = await createPasswordRecord(input.password);
     try {
       await inTransaction(this.pool, async (client) => {

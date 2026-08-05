@@ -35,7 +35,7 @@ export default function RegisterForm() {
     <label><span>Password</span><input required type="password" minLength={12} maxLength={128} autoComplete="new-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
     {error && <p className="form-notice error">{error}</p>}
     <button className="primary-button" type="submit" disabled={busy}>{busy ? "Creating merchant…" : "Create merchant"}</button>
-    <small>Sandbox only · NGN ledger · no real settlement or identity verification.</small>
+    <small>Sandbox only · USD ledger · no real settlement or identity verification.</small>
     <a className="auth-link" href="/login">Already registered? Sign in</a>
   </form></main>;
 }
