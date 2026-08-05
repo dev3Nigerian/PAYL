@@ -2,7 +2,7 @@ name: PAYL CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/hosted-sandbox-deployment]
   pull_request:
 
 permissions:
