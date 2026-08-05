@@ -97,7 +97,7 @@ Merchants do not manually create a paid order. Orders are generated from authori
 
 Before fulfillment, the consumer may call `commerce.cancel_order` or use **Cancel order** in the dashboard. PAYL atomically returns the gross amount to the consumer and reverses both pending merchant revenue and PAYL's fee. `payment.cancel` separately releases an unused reservation or cancels a pending approval. The background lifecycle worker performs the same safe release when authority or fulfillment expires.
 
-An eligible consumer can refund the order from **Activity** or through `payment.request_refund` on `payl_wallet`. PAYL returns the full captured amount to the consumer, debits the merchant by that gross amount, and retains the original PAYL fee. Refunds are full-order, immediate, signed, auditable, and idempotent. A merchant whose refundable order is returned can therefore show a negative payable balance equal to the retained fee.
+An eligible consumer can refund the order from **Activity** or through `payment.request_refund` on the unified `payl` MCP connection. PAYL returns the full captured amount to the consumer, debits the merchant by that gross amount, and retains the original PAYL fee. Refunds are full-order, immediate, signed, auditable, and idempotent. A merchant whose refundable order is returned can therefore show a negative payable balance equal to the retained fee.
 
 The merchant **Settlement** workspace separates pending-fulfillment revenue, payout-eligible payable, and reserve. A sandbox payout retains 10% in reserve, moves the remainder to simulated settlement clearing, and is idempotent. Refunds after payout consume reserve first and leave any remaining merchant liability visible. Live reconciliation compares order, cancellation, refund, and payout movements with the three merchant ledger balances. Merchant dashboards also expose quote conversion, approval latency, fulfillment status, refunds, webhook backlog, payout count, audit coverage, and journal integrity.
 
@@ -105,20 +105,19 @@ Merchants can configure an HTTPS webhook in **Settlement**. Order, cancellation,
 
 ## Connect PAYL to Codex or another MCP client
 
-This repository includes `.codex/config.toml` with two project-scoped Streamable HTTP connections that the consumer configures once:
+This repository includes `.codex/config.toml` with one project-scoped Streamable HTTP connection. The single `payl` server combines the consumer wallet and the multi-merchant commerce network at `http://localhost:4100/mcp`.
 
-- `payl_wallet` → `http://localhost:4100/mcp/wallet`
-- `payl_commerce` → `http://localhost:4100/mcp/commerce`
+After starting PAYL with `pnpm dev`, open the consumer dashboard's **Connect AI** tab, copy the Codex setup, trust the repository, and restart Codex or open a new Codex task. In Codex, use `/mcp` or **Settings → MCP servers** to add the one PAYL server. PAYL returns protected-resource metadata, Codex opens the consumer login and consent flow, and write-capable tools retain the `writes` approval mode.
 
-After starting PAYL with `pnpm dev`, trust the repository and restart Codex or open a new Codex task. In Codex, use `/mcp` or **Settings → MCP servers** to connect. PAYL returns protected-resource metadata, Codex opens the consumer login and consent flow, and write-capable tools retain the `writes` approval mode.
+The same quick-start instructions are available at `http://localhost:4100/docs/mcp` locally or at the hosted API's `/docs/mcp` URL.
 
 Refunds use the separate `wallet:refund` OAuth permission. Connections authorized before this scope was added must be revoked and reconnected before `payment.request_refund` can be called; dashboard refunds continue to use the signed-in consumer session.
 
-To configure another OAuth-capable MCP client, register the same two Streamable HTTP URLs. Clients discover PAYL's OAuth authorization server, dynamically register a client, use authorization code with PKCE, and receive audience-bound bearer tokens for `http://localhost:4100/mcp`. New merchants and products appear through `payl_commerce` automatically; the consumer does not add or authorize another MCP server.
+To configure another OAuth-capable MCP client, register the single Streamable HTTP URL. Clients discover PAYL's OAuth authorization server, dynamically register a client, use authorization code with PKCE, and receive audience-bound bearer tokens for `http://localhost:4100/mcp`. New merchants and products appear automatically; the consumer does not add or authorize another MCP server.
 
 ### Test quotes across multiple merchants
 
-1. Connect `payl_wallet` and `payl_commerce` once.
+1. Connect the single `payl` server once.
 2. Open `http://localhost:3001/register` and create additional sandbox merchants.
 3. Add at least one product from each merchant's **Products** tab.
 4. Without changing MCP configuration, ask the AI to call `commerce.list_merchants` or `commerce.search_offers` and compare results.

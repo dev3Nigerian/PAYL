@@ -37,19 +37,24 @@ export type WalletState = {
     retained_fee_minor: string | null;
     created_at: string;
   }>;
-  connections: Array<{
-    clientId: string;
-    clientName: string;
-    resource: string;
-    scopes: string[];
-    connectedAt: string;
-  }>;
+  connections: Connection[];
 };
 
-type Tab = "wallet" | "activity" | "permissions" | "security";
+export type Connection = {
+  clientId: string;
+  clientName: string;
+  resource: string;
+  scopes: string[];
+  connectedAt: string;
+};
+
+export type McpEndpoints = { consumer: string };
+
+type Tab = "wallet" | "connect" | "activity" | "permissions" | "security";
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: "wallet", label: "Wallet" },
+  { id: "connect", label: "Connect AI" },
   { id: "activity", label: "Activity" },
   { id: "permissions", label: "AI permissions" },
   { id: "security", label: "Security" },
@@ -67,6 +72,10 @@ function minorUnits(value: string): string {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount < 0) throw new Error("Enter a valid non-negative amount");
   return Math.round(amount * 100).toString();
+}
+
+function codexConfig(endpoint: string): string {
+  return `# PAYL consumer MCP connection\n[mcp_servers.payl]\nurl = "${endpoint}"\nenabled = true\nrequired = false\ntool_timeout_sec = 90\ndefault_tools_approval_mode = "writes"\nenabled_tools = [\n  "wallet.get_summary",\n  "wallet.get_policy",\n  "payment.prepare",\n  "payment.get_status",\n  "payment.cancel",\n  "payment.request_refund",\n  "commerce.list_merchants",\n  "commerce.search_offers",\n  "commerce.get_offer",\n  "commerce.create_quote",\n  "commerce.commit_order",\n  "commerce.get_order",\n  "commerce.cancel_order",\n]`;
 }
 
 function refundLabel(order: WalletState["orders"][number]): string {
@@ -101,7 +110,66 @@ function ActivityList({
   ))}</div>;
 }
 
-export default function WalletDashboard({ initialState }: { initialState: WalletState | null }) {
+function ConnectAiPanel({
+  endpoint,
+  connections,
+  onRevoke,
+}: {
+  endpoint: string;
+  connections: Connection[];
+  onRevoke: (clientId: string, resource: string) => void;
+}) {
+  const [copied, setCopied] = useState<"config" | "endpoint" | null>(null);
+  const config = codexConfig(endpoint);
+
+  async function copy(value: string, kind: "config" | "endpoint") {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1800);
+    } catch {
+      setCopied(null);
+    }
+  }
+
+  function downloadConfig() {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([config], { type: "text/plain" }));
+    link.download = "payl-mcp.toml";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
+  return <section className="connect-layout">
+    <article className="dashboard-panel connect-hero">
+      <div>
+        <p className="section-label">One-time setup</p>
+        <h2>Connect your AI to PAYL</h2>
+        <p className="form-intro">Add one PAYL connection to your MCP client. It gives your AI access to your wallet and every registered merchant without another setup for each store.</p>
+        <div className="connect-actions"><button className="primary-button" type="button" onClick={() => void copy(config, "config")}>{copied === "config" ? "Copied setup" : "Copy Codex setup"}</button><button className="secondary-button" type="button" onClick={downloadConfig}>Download config</button></div>
+      </div>
+      <div className="connect-trust"><span className="connect-trust-icon">01</span><div><strong>Your password stays with PAYL</strong><small>OAuth opens a secure PAYL sign-in and permission screen. Your AI receives scoped tools, not your password or wallet secret.</small></div></div>
+    </article>
+
+    <article className="dashboard-panel connect-steps-panel">
+      <div className="panel-title"><div><p className="section-label">How to connect</p><h2>Three simple steps</h2></div><span>{connections.length ? `${connections.length} connected` : "Not connected yet"}</span></div>
+      <ol className="connect-steps"><li><strong>Add PAYL to your AI client</strong><span>In Codex, open <b>/mcp</b> or MCP settings and paste the copied setup. Other clients should add the Streamable HTTP URL below.</span></li><li><strong>Sign in and allow</strong><span>PAYL opens automatically. Sign in as the consumer, review the wallet and commerce permissions, then choose <b>Allow connection</b>.</span></li><li><strong>Start shopping</strong><span>Ask your AI to check your PAYL balance or compare offers. The same connection works across all merchants.</span></li></ol>
+    </article>
+
+    <article className="dashboard-panel endpoint-panel">
+      <div className="panel-title"><div><p className="section-label">Streamable HTTP</p><h2>PAYL connection URL</h2></div><button className="secondary-button" type="button" onClick={() => void copy(endpoint, "endpoint")}>{copied === "endpoint" ? "Copied" : "Copy URL"}</button></div>
+      <code className="endpoint-value">{endpoint}</code>
+      <p className="form-intro endpoint-help">Use this single URL for both wallet and commerce. OAuth discovery is automatic; you do not need to paste a client ID, secret, or merchant URL.</p>
+    </article>
+
+    <article className="dashboard-panel connection-status-panel">
+      <div className="panel-title"><div><p className="section-label">Access control</p><h2>Connected AI clients</h2></div><span>{connections.length} active</span></div>
+      {connections.length === 0 ? <p className="empty-state">No AI client has been authorized yet. Add the URL above to begin.</p> : <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={`${connection.clientId}:${connection.resource}`}><div><strong>{connection.clientName}</strong><span>{connection.scopes.join(" · ")}</span><small>Connected {new Date(connection.connectedAt).toLocaleString("en-US")}</small></div><button className="secondary-button" type="button" onClick={() => onRevoke(connection.clientId, connection.resource)}>Revoke</button></div>)}</div>}
+    </article>
+  </section>;
+}
+
+export default function WalletDashboard({ initialState, mcpEndpoints }: { initialState: WalletState | null; mcpEndpoints: McpEndpoints }) {
   const [tab, setTab] = useState<Tab>("wallet");
   const [policy, setPolicy] = useState<Policy | null>(initialState?.policy ?? null);
   const [connections, setConnections] = useState(initialState?.connections ?? []);
@@ -210,6 +278,7 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
 
   const headings: Record<Tab, [string, string]> = {
     wallet: ["Consumer wallet", "Good to see you."],
+    connect: ["AI connection", "Connect once, shop everywhere."],
     activity: ["Wallet activity", "Agent purchases"],
     permissions: ["AI permissions", "Set spending boundaries"],
     security: ["Wallet security", "How PAYL protects payment authority"],
@@ -255,7 +324,10 @@ export default function WalletDashboard({ initialState }: { initialState: Wallet
               <button className="primary-button full-button" type="button" onClick={() => setTab("permissions")}>Edit policy</button>
             </aside>
           </section>
+          <article className="dashboard-panel connect-callout"><div><p className="section-label">Plug-and-play MCP</p><h2>Connect your AI once</h2><p>Use one PAYL connection to see your balance, compare every merchant, and pay within your policy.</p></div><button className="primary-button" type="button" onClick={() => setTab("connect")}>Set up AI connection</button></article>
         </>}
+
+        {tab === "connect" && <ConnectAiPanel endpoint={mcpEndpoints.consumer} connections={connections} onRevoke={(clientId, resource) => void revokeConnection(clientId, resource)} />}
 
         {tab === "activity" && <article className="dashboard-panel section-panel">
           <div className="panel-title"><div><p className="section-label">Ledger activity</p><h2>Completed purchases</h2></div><span>{initialState?.orders.length ?? 0} total</span></div>

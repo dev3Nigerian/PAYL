@@ -4,7 +4,7 @@ This deployment is for product demonstrations with simulated funds. It is not ap
 
 ## Architecture
 
-- `payl-api-dev3nigerian`: Express API, OAuth authorization server, two MCP endpoints, migrations, lifecycle processing, and webhook delivery.
+- `payl-api-dev3nigerian`: Express API, OAuth authorization server, unified consumer MCP endpoint plus compatibility endpoints, migrations, lifecycle processing, and webhook delivery.
 - `payl-consumer-dev3nigerian`: consumer wallet and approval dashboard.
 - `payl-merchant-dev3nigerian`: merchant registration, catalog, orders, and settlement dashboard.
 - Neon: persistent PostgreSQL database using its pooled TLS connection.
@@ -103,14 +103,13 @@ Then verify this sequence:
 
 ## 6. Connect Codex
 
-The hosted MCP URLs are:
+The hosted consumer MCP URL is:
 
 ```text
-https://payl-api-dev3nigerian.onrender.com/mcp/wallet
-https://payl-api-dev3nigerian.onrender.com/mcp/commerce
+https://payl-api-dev3nigerian.onrender.com/mcp
 ```
 
-Use `.codex/config.hosted.example.toml` as the template. Keep the local `.codex/config.toml` when you still want local development. The first connection opens the hosted consumer login and OAuth consent flow. Because the dashboard and API use different HTTPS origins, PAYL exchanges a two-minute, single-use browser handoff and establishes the API-origin OAuth session without putting the dashboard session token in a URL.
+Use `.codex/config.hosted.example.toml` as the template. The consumer dashboard's **Connect AI** tab also provides a copyable setup and downloadable config. Keep the local `.codex/config.toml` when you still want local development. The first connection opens the hosted consumer login and OAuth consent flow. Because the dashboard and API use different HTTPS origins, PAYL exchanges a two-minute, single-use browser handoff and establishes the API-origin OAuth session without putting the dashboard session token in a URL. The older `/mcp/wallet` and `/mcp/commerce` endpoints remain available for compatibility.
 
 ## Operational boundaries
 

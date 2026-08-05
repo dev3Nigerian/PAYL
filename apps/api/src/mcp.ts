@@ -27,14 +27,7 @@ function toolFailure(error: unknown) {
   };
 }
 
-function createWalletServer(service: PaylService, consumerId: string): McpServer {
-  const server = new McpServer(
-    { name: "payl-wallet-payment", version: "0.1.0" },
-    {
-      instructions: "PAYL is a sandbox consumer wallet. Use payment.prepare only with the exact merchant-signed quote. Never alter signed fields or approve for the human. If approval is pending, show approvalUrl to the user, then poll payment.get_status. A mandate is single-use and must go only to its bound merchant. Cancel unused payment authority with payment.cancel. Call payment.request_refund only after explicit consumer confirmation; eligible refunds return the full order amount while PAYL retains its fee from the merchant.",
-    },
-  );
-
+function registerWalletTools(server: McpServer, service: PaylService, consumerId: string): void {
   server.registerTool(
     "wallet.get_summary",
     {
@@ -147,17 +140,9 @@ function createWalletServer(service: PaylService, consumerId: string): McpServer
     },
   );
 
-  return server;
 }
 
-function createCommerceNetworkServer(service: PaylService, consumerId: string): McpServer {
-  const server = new McpServer(
-    { name: "payl-commerce-network", version: "0.1.0" },
-    {
-      instructions: "PAYL commerce is a multi-merchant sandbox network. Discover registered merchants and compare their active offers through this one connection. Every signed quote remains bound to exactly one merchant. Prepare payment through the wallet, then commit the unchanged quote and single-use mandate here. Digital downloads fulfill immediately; digital services remain pending until the merchant fulfills them. A consumer may cancel a pending-fulfillment order with commerce.cancel_order.",
-    },
-  );
-
+function registerCommerceNetworkTools(server: McpServer, service: PaylService, consumerId: string): void {
   server.registerTool(
     "commerce.list_merchants",
     {
@@ -303,6 +288,39 @@ function createCommerceNetworkServer(service: PaylService, consumerId: string): 
     },
   );
 
+}
+
+function createWalletServer(service: PaylService, consumerId: string): McpServer {
+  const server = new McpServer(
+    { name: "payl-wallet-payment", version: "0.1.0" },
+    {
+      instructions: "PAYL is a sandbox consumer wallet. Use payment.prepare only with the exact merchant-signed quote. Never alter signed fields or approve for the human. If approval is pending, show approvalUrl to the user, then poll payment.get_status. A mandate is single-use and must go only to its bound merchant. Cancel unused payment authority with payment.cancel. Call payment.request_refund only after explicit consumer confirmation; eligible refunds return the full order amount while PAYL retains its fee from the merchant.",
+    },
+  );
+  registerWalletTools(server, service, consumerId);
+  return server;
+}
+
+function createCommerceNetworkServer(service: PaylService, consumerId: string): McpServer {
+  const server = new McpServer(
+    { name: "payl-commerce-network", version: "0.1.0" },
+    {
+      instructions: "PAYL commerce is a multi-merchant sandbox network. Discover registered merchants and compare their active offers through this one connection. Every signed quote remains bound to exactly one merchant. Prepare payment through the wallet, then commit the unchanged quote and single-use mandate here. Digital downloads fulfill immediately; digital services remain pending until the merchant fulfills them. A consumer may cancel a pending-fulfillment order with commerce.cancel_order.",
+    },
+  );
+  registerCommerceNetworkTools(server, service, consumerId);
+  return server;
+}
+
+function createConsumerServer(service: PaylService, consumerId: string): McpServer {
+  const server = new McpServer(
+    { name: "payl-consumer-network", version: "0.1.0" },
+    {
+      instructions: "PAYL is a single plug-and-play consumer connection for wallet and multi-merchant commerce. Discover offers across every registered merchant, create a signed quote, prepare payment through the wallet, and commit the unchanged quote. The consumer's spending policy and approval rules always apply. Show approvalUrl when human approval is required, and request refunds only after explicit consumer confirmation.",
+    },
+  );
+  registerWalletTools(server, service, consumerId);
+  registerCommerceNetworkTools(server, service, consumerId);
   return server;
 }
 
@@ -437,6 +455,15 @@ export async function handleCommerceMcp(service: PaylService, request: Request, 
     return;
   }
   await handle(createCommerceNetworkServer(service, consumerId), request, response);
+}
+
+export async function handleConsumerMcp(service: PaylService, request: Request, response: Response): Promise<void> {
+  const consumerId = request.auth?.extra?.consumerId;
+  if (typeof consumerId !== "string") {
+    response.status(401).json({ error: "PAYL access requires an authenticated consumer OAuth grant" });
+    return;
+  }
+  await handle(createConsumerServer(service, consumerId), request, response);
 }
 
 export async function handleMerchantMcp(service: PaylService, request: Request, response: Response): Promise<void> {

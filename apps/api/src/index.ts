@@ -30,6 +30,7 @@ server.listen(config.port, () => {
     {
       port: config.port,
       deploymentProfile: config.deploymentProfile,
+      consumerMcp: new URL("/mcp", config.publicBaseUrl).href,
       walletMcp: new URL("/mcp/wallet", config.publicBaseUrl).href,
       commerceMcp: new URL("/mcp/commerce", config.publicBaseUrl).href,
       merchantMcp: new URL(`/mcp/merchants/${config.sandboxMerchantId}`, config.publicBaseUrl).href,

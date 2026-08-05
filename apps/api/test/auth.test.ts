@@ -279,6 +279,23 @@ describe("PAYL identity and MCP authorization", () => {
       .send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "commerce.list_merchants", arguments: {} } })
       .expect(200);
     expect(JSON.stringify(directory.body)).toContain("Network Merchant Two");
+    const unifiedWallet = await request(app).post("/mcp")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("accept", "application/json, text/event-stream")
+      .send({ jsonrpc: "2.0", id: 20, method: "tools/call", params: { name: "wallet.get_summary", arguments: {} } })
+      .expect(200);
+    expect(JSON.stringify(unifiedWallet.body)).toContain("consumer_demo");
+    const unifiedCommerce = await request(app).post("/mcp")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("accept", "application/json, text/event-stream")
+      .send({ jsonrpc: "2.0", id: 21, method: "tools/call", params: { name: "commerce.list_merchants", arguments: {} } })
+      .expect(200);
+    expect(JSON.stringify(unifiedCommerce.body)).toContain("Network Merchant Two");
+    await request(app).post("/mcp")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("accept", "application/json, text/event-stream")
+      .send({ jsonrpc: "2.0", id: 22, method: "tools/call", params: { name: "payment.request_refund", arguments: { orderId: "order_missing", idempotencyKey: "refund-unified-scope-test" } } })
+      .expect(403);
     await request(app).post("/mcp/commerce")
       .set("authorization", `Bearer ${accessToken}`)
       .set("accept", "application/json, text/event-stream")

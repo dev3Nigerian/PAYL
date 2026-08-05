@@ -7,7 +7,7 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import type { Config } from "./config.js";
 import { DomainError } from "./errors.js";
 import { bearerToken, cookieValue, type AuthSession, type IdentityService, type UserRole } from "./identity.js";
-import { handleCommerceMcp, handleMerchantMcp, handleWalletMcp } from "./mcp.js";
+import { handleCommerceMcp, handleConsumerMcp, handleMerchantMcp, handleWalletMcp } from "./mcp.js";
 import { MCP_SCOPES, type PaylOAuthProvider, requireToolScope, toolScopeForRequest } from "./oauth.js";
 import { DIGITAL_GOODS_TERMS_V1, type PaylService } from "./service.js";
 
@@ -79,11 +79,31 @@ export function createApp(
     }
   });
 
+  app.get("/docs/mcp", (_request, response) => {
+    const endpoint = new URL("/mcp", config.publicBaseUrl).href;
+    const dashboard = new URL("/", config.approvalWebUrl).href;
+    response.type("html").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect PAYL to your AI</title><style>body{margin:0;padding:32px;background:#f3f4ed;color:#111914;font-family:system-ui,sans-serif;line-height:1.6}.card{max-width:680px;margin:auto;padding:32px;border:1px solid #dce1d7;border-radius:24px;background:#fff;box-shadow:0 24px 70px rgba(30,52,38,.12)}.brand{color:#0b6b42;font-size:22px;font-weight:900}h1{margin:28px 0 8px;line-height:1.1}h2{margin-top:28px;font-size:18px}p,li{color:#627068}code,pre{display:block;overflow:auto;padding:14px;border-radius:12px;background:#f1f5ed;color:#0b6b42}a{color:#0b6b42;font-weight:700}</style></head><body><main class="card"><div class="brand">PAYL</div><h1>Connect your AI once</h1><p>Add one MCP server to your AI client. The same connection includes your PAYL wallet and every registered merchant.</p><h2>Connection URL</h2><code>${html(endpoint)}</code><h2>Setup</h2><ol><li>Add the URL above in Codex or another OAuth-capable MCP client.</li><li>When PAYL opens, sign in as the consumer and choose <strong>Allow connection</strong>.</li><li>Ask your AI to check your balance or compare PAYL offers.</li></ol><p>Your AI receives scoped tools through OAuth; it never receives your PAYL password or wallet secret.</p><p><a href="${html(dashboard)}">Open the consumer dashboard</a> to copy a Codex setup file and manage connected clients.</p></main></body></html>`);
+  });
+
   app.get("/terms/digital-goods-v1", (_request, response) => {
     response.type("text/plain").send(DIGITAL_GOODS_TERMS_V1);
   });
 
   const bearer = requireBearerAuth({ verifier: oauth, resourceMetadataUrl });
+  app.post("/mcp", bearer, (request, _response, next) => {
+    try {
+      requireToolScope(request, toolScopeForRequest(request, "network"));
+      next();
+    } catch (error) {
+      next(error);
+    }
+  }, async (request, response, next) => {
+    try {
+      await handleConsumerMcp(service, request, response);
+    } catch (error) {
+      next(error);
+    }
+  });
   app.post("/mcp/wallet", bearer, (request, _response, next) => {
     try {
       requireToolScope(request, toolScopeForRequest(request, "wallet"));
@@ -126,7 +146,7 @@ export function createApp(
       next(error);
     }
   });
-  app.all(["/mcp/wallet", "/mcp/commerce", "/mcp/merchants/:merchantId"], (_request, response) => {
+  app.all(["/mcp", "/mcp/wallet", "/mcp/commerce", "/mcp/merchants/:merchantId"], (_request, response) => {
     response.status(405).set("Allow", "POST").json({ error: "The stateless MCP transport accepts POST only" });
   });
 
@@ -493,6 +513,16 @@ export function createApp(
   });
 
   return app;
+}
+
+function html(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;",
+  })[character] ?? character);
 }
 
 function hostedAuthorizeReturnTo(value: unknown, config: Config): string {

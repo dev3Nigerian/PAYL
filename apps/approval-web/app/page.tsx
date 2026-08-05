@@ -21,5 +21,6 @@ export default async function Page() {
   }
   if (response?.status === 401 || response?.status === 403) redirect("/login");
   if (response?.ok) state = await response.json() as WalletState;
-  return <WalletDashboard initialState={state} />;
+  const mcpEndpoints = { consumer: new URL("/mcp", apiUrl).href };
+  return <WalletDashboard initialState={state} mcpEndpoints={mcpEndpoints} />;
 }

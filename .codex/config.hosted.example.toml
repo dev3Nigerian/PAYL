@@ -1,8 +1,8 @@
-# Copy these entries into your trusted project or user Codex configuration after deployment.
+# Copy this entry into your trusted project or user Codex configuration after deployment.
 # Replace the example hostname if you changed the Render service name.
 
-[mcp_servers.payl_wallet]
-url = "https://payl-api-dev3nigerian.onrender.com/mcp/wallet"
+[mcp_servers.payl]
+url = "https://payl-api-dev3nigerian.onrender.com/mcp"
 enabled = true
 required = false
 tool_timeout_sec = 90
@@ -14,15 +14,6 @@ enabled_tools = [
   "payment.get_status",
   "payment.cancel",
   "payment.request_refund",
-]
-
-[mcp_servers.payl_commerce]
-url = "https://payl-api-dev3nigerian.onrender.com/mcp/commerce"
-enabled = true
-required = false
-tool_timeout_sec = 90
-default_tools_approval_mode = "writes"
-enabled_tools = [
   "commerce.list_merchants",
   "commerce.search_offers",
   "commerce.get_offer",

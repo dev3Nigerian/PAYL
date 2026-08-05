@@ -1,8 +1,8 @@
-# Project-local PAYL sandbox MCP connections.
+# Project-local PAYL sandbox MCP connection.
 # Codex loads this file only after the repository is trusted.
 
-[mcp_servers.payl_wallet]
-url = "http://localhost:4100/mcp/wallet"
+[mcp_servers.payl]
+url = "http://localhost:4100/mcp"
 enabled = true
 required = false
 tool_timeout_sec = 60
@@ -14,15 +14,6 @@ enabled_tools = [
   "payment.get_status",
   "payment.cancel",
   "payment.request_refund",
-]
-
-[mcp_servers.payl_commerce]
-url = "http://localhost:4100/mcp/commerce"
-enabled = true
-required = false
-tool_timeout_sec = 60
-default_tools_approval_mode = "writes"
-enabled_tools = [
   "commerce.list_merchants",
   "commerce.search_offers",
   "commerce.get_offer",
