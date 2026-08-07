@@ -78,6 +78,14 @@ function codexConfig(endpoint: string): string {
   return `# PAYL consumer MCP connection\n[mcp_servers.payl]\nurl = "${endpoint}"\nenabled = true\nrequired = false\ntool_timeout_sec = 90\ndefault_tools_approval_mode = "writes"\nenabled_tools = [\n  "wallet.get_summary",\n  "wallet.get_policy",\n  "payment.prepare",\n  "payment.get_status",\n  "payment.cancel",\n  "payment.request_refund",\n  "commerce.list_merchants",\n  "commerce.search_offers",\n  "commerce.get_offer",\n  "commerce.create_quote",\n  "commerce.commit_order",\n  "commerce.get_order",\n  "commerce.cancel_order",\n]`;
 }
 
+function cursorConfig(endpoint: string): string {
+  return JSON.stringify({ mcpServers: { payl: { url: endpoint } } }, null, 2);
+}
+
+function cascadeConfig(endpoint: string): string {
+  return JSON.stringify({ mcpServers: { payl: { serverUrl: endpoint } } }, null, 2);
+}
+
 function refundLabel(order: WalletState["orders"][number]): string {
   if (order.status === "confirmed") return order.fulfillment_deadline ? `Awaiting merchant fulfillment by ${new Date(order.fulfillment_deadline).toLocaleString("en-US")}` : "Awaiting merchant fulfillment";
   if (order.status === "cancelled") return order.cancellation_reason ?? "Cancelled before fulfillment";
@@ -119,10 +127,12 @@ function ConnectAiPanel({
   connections: Connection[];
   onRevoke: (clientId: string, resource: string) => void;
 }) {
-  const [copied, setCopied] = useState<"config" | "endpoint" | null>(null);
+  const [copied, setCopied] = useState<"config" | "endpoint" | "cursor" | "cascade" | null>(null);
   const config = codexConfig(endpoint);
+  const cursorMcpConfig = cursorConfig(endpoint);
+  const cascadeMcpConfig = cascadeConfig(endpoint);
 
-  async function copy(value: string, kind: "config" | "endpoint") {
+  async function copy(value: string, kind: "config" | "endpoint" | "cursor" | "cascade") {
     try {
       await navigator.clipboard.writeText(value);
       setCopied(kind);
@@ -154,6 +164,58 @@ function ConnectAiPanel({
     <article className="dashboard-panel connect-steps-panel">
       <div className="panel-title"><div><p className="section-label">How to connect</p><h2>Three simple steps</h2></div><span>{connections.length ? `${connections.length} connected` : "Not connected yet"}</span></div>
       <ol className="connect-steps"><li><strong>Add PAYL to your AI client</strong><span>In Codex, open <b>/mcp</b> or MCP settings and paste the copied setup. Other clients should add the Streamable HTTP URL below.</span></li><li><strong>Sign in and allow</strong><span>PAYL opens automatically. Sign in as the consumer, review the wallet and commerce permissions, then choose <b>Allow connection</b>.</span></li><li><strong>Start shopping</strong><span>Ask your AI to check your PAYL balance or compare offers. The same connection works across all merchants.</span></li></ol>
+    </article>
+
+    <article className="dashboard-panel connection-guides-panel">
+      <div className="panel-title"><div><p className="section-label">Client guides</p><h2>Connect from your AI IDE</h2></div><span>One URL · OAuth</span></div>
+      <p className="form-intro guides-intro">Choose the client you use below. PAYL uses the same connection for your wallet and every merchant, so you only authorize it once. Do not add an API key or bearer token.</p>
+      <div className="connection-guides">
+        <details className="connection-guide" open>
+          <summary><span>Cursor</span><small>Project or global <code>mcp.json</code></small></summary>
+          <div className="connection-guide-body">
+            <ol className="guide-steps"><li>Open <code>.cursor/mcp.json</code> in your project, or <code>%USERPROFILE%\\.cursor\\mcp.json</code> for all projects.</li><li>Paste the JSON below, save, then reload Cursor.</li><li>Select PAYL and choose <b>Connect</b>. Sign in and choose <b>Allow and connect</b>.</li></ol>
+            <div className="guide-code-title"><span>Cursor configuration</span><button className="text-button" type="button" onClick={() => void copy(cursorMcpConfig, "cursor")}>{copied === "cursor" ? "Copied" : "Copy JSON"}</button></div>
+            <pre className="guide-code"><code>{cursorMcpConfig}</code></pre>
+          </div>
+        </details>
+
+        <details className="connection-guide">
+          <summary><span>Devin</span><small>Custom MCP server</small></summary>
+          <div className="connection-guide-body">
+            <ol className="guide-steps"><li>Open <b>Settings → Connections → MCP servers</b> and choose <b>Add a custom MCP</b>.</li><li>Choose <b>HTTP</b>, enter the PAYL URL below, select <b>OAuth</b>, and choose <b>Personal</b> access.</li><li>Save, choose <b>Test listing tools</b>, sign in, and choose <b>Allow and connect</b>.</li></ol>
+            <div className="guide-fields"><span><b>Transport:</b> HTTP</span><span><b>Authentication:</b> OAuth</span><span><b>Access:</b> Personal</span></div>
+            <code className="guide-url">{endpoint}</code>
+          </div>
+        </details>
+
+        <details className="connection-guide">
+          <summary><span>Windsurf / Cascade</span><small><code>mcp_config.json</code></small></summary>
+          <div className="connection-guide-body">
+            <ol className="guide-steps"><li>Open your Cascade MCP configuration file.</li><li>Paste the JSON below and save.</li><li>Restart Windsurf/Cascade, select PAYL, then complete the OAuth login and consent.</li></ol>
+            <div className="guide-code-title"><span>Cascade configuration</span><button className="text-button" type="button" onClick={() => void copy(cascadeMcpConfig, "cascade")}>{copied === "cascade" ? "Copied" : "Copy JSON"}</button></div>
+            <pre className="guide-code"><code>{cascadeMcpConfig}</code></pre>
+          </div>
+        </details>
+
+        <details className="connection-guide">
+          <summary><span>Claude</span><small>Claude, Claude Desktop, or Claude Code</small></summary>
+          <div className="connection-guide-body">
+            <p className="guide-subtitle">Claude web or Claude Desktop</p>
+            <ol className="guide-steps"><li>Open <b>Customize → Connectors</b>, click <b>+</b>, then choose <b>Add custom connector</b>.</li><li>Enter <b>PAYL</b> and the URL below. Leave OAuth client ID and secret empty.</li><li>Click <b>Add</b>, then <b>Connect</b>. Enable PAYL from the chat <b>+</b> menu.</li></ol>
+            <p className="guide-subtitle">Claude Code</p>
+            <pre className="guide-code"><code>{`claude mcp add --transport http payl ${endpoint}`}</code></pre>
+            <p className="guide-note">Then run <code>/mcp</code>, select PAYL, and complete the browser OAuth flow. Use Claude’s Connectors settings for remote PAYL; do not put this hosted URL in <code>claude_desktop_config.json</code>.</p>
+          </div>
+        </details>
+
+        <details className="connection-guide">
+          <summary><span>Any other MCP client</span><small>Remote Streamable HTTP</small></summary>
+          <div className="connection-guide-body">
+            <ol className="guide-steps"><li>Add a new remote MCP server using <b>Streamable HTTP</b>.</li><li>Paste the PAYL URL below and choose <b>OAuth</b> authentication.</li><li>Sign in as the consumer and choose <b>Allow and connect</b> when PAYL displays the permission screen.</li></ol>
+            <code className="guide-url">{endpoint}</code>
+          </div>
+        </details>
+      </div>
     </article>
 
     <article className="dashboard-panel endpoint-panel">

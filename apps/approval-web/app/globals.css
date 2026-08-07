@@ -93,6 +93,29 @@ h1 { margin: 0; font-size: clamp(30px, 6vw, 48px); line-height: 1.02; letter-spa
 .connect-steps li::before { content: counter(connect-step); position: absolute; left: 0; top: -3px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 9px; color: var(--green); background: #edf7dc; font-size: 12px; font-weight: 900; }
 .connect-steps strong, .connect-steps span { display: block; }
 .connect-steps span { margin-top: 5px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.connection-guides-panel { grid-column: 1 / -1; }
+.guides-intro { max-width: 800px; margin-bottom: 18px; }
+.connection-guides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.connection-guide { min-width: 0; border: 1px solid var(--line); border-radius: 15px; background: #fbfcf9; }
+.connection-guide summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px; cursor: pointer; list-style: none; font-weight: 800; }
+.connection-guide summary::-webkit-details-marker { display: none; }
+.connection-guide summary::after { content: "+"; color: var(--green); font-size: 18px; line-height: 1; }
+.connection-guide[open] summary { border-bottom: 1px solid var(--line); }
+.connection-guide[open] summary::after { content: "−"; }
+.connection-guide summary small { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 600; text-align: right; }
+.connection-guide-body { padding: 16px; }
+.guide-steps { margin: 0; padding-left: 21px; }
+.guide-steps li { padding: 0 0 10px 3px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.guide-steps li:last-child { padding-bottom: 0; }
+.guide-steps b { color: var(--ink); }
+.guide-code-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.guide-code { display: block; max-width: 100%; margin: 8px 0 0; overflow-x: auto; padding: 12px; border-radius: 10px; color: var(--green); background: #eef4e9; font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.guide-url { display: block; max-width: 100%; margin-top: 16px; overflow-x: auto; padding: 12px; border-radius: 10px; color: var(--green); background: #eef4e9; font-size: 11px; overflow-wrap: anywhere; }
+.guide-fields { display: grid; gap: 6px; margin-top: 16px; color: var(--muted); font-size: 12px; }
+.guide-fields b { color: var(--ink); }
+.guide-subtitle { margin: 16px 0 7px; color: var(--green); font-size: 12px; font-weight: 800; }
+.guide-subtitle:first-child { margin-top: 0; }
+.guide-note { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .endpoint-panel, .connection-status-panel { grid-column: 1 / -1; }
 .endpoint-value { display: block; margin-top: 19px; overflow-x: auto; padding: 14px; border-radius: 12px; color: var(--green); background: #f1f5ed; font-size: 13px; }
 .endpoint-help { margin: 13px 0 0; font-size: 13px; }
@@ -136,4 +159,4 @@ h1 { margin: 0; font-size: clamp(30px, 6vw, 48px); line-height: 1.02; letter-spa
 .connection-row span, .connection-row small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
 .connection-row span { overflow-wrap: anywhere; }
 @media (max-width: 900px) { .dashboard-shell { grid-template-columns: 1fr; } .consumer-sidebar { display: none; } .dashboard-content { padding: 26px; } .mobile-nav { display: flex; gap: 7px; margin: -8px 0 28px; overflow-x: auto; } .mobile-nav button { flex: 0 0 auto; border: 0; padding: 10px 13px; border-radius: 10px; color: var(--muted); background: #e5e9e1; font-weight: 700; } .mobile-nav .nav-active { color: #102018; background: var(--lime); } .wallet-grid, .wallet-hero, .settings-grid, .security-grid { grid-template-columns: 1fr; } }
-@media (max-width: 700px) { .connect-layout { grid-template-columns: 1fr; } .connect-callout { align-items: flex-start; flex-direction: column; } .connect-actions { flex-direction: column; align-items: stretch; } }
+@media (max-width: 700px) { .connect-layout { grid-template-columns: 1fr; } .connect-callout { align-items: flex-start; flex-direction: column; } .connect-actions { flex-direction: column; align-items: stretch; } .connection-guides { grid-template-columns: 1fr; } .connection-guide summary { align-items: flex-start; flex-wrap: wrap; } .connection-guide summary small { width: 100%; margin-left: 0; text-align: left; } }
