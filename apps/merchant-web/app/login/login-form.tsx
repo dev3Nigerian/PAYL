@@ -18,7 +18,7 @@ export default function LoginForm({ demoEmail, demoPassword, prefilled }: { demo
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const body = await response.json() as { error?: { message?: string } };
+      const body = await readJson(response) as { error?: { message?: string } };
       if (!response.ok) throw new Error(body.error?.message ?? "Sign-in failed");
       window.location.assign("/");
     } catch (reason) {
@@ -37,4 +37,14 @@ export default function LoginForm({ demoEmail, demoPassword, prefilled }: { demo
     <small>{prefilled ? "Sandbox credentials are prefilled for local testing." : "Use the credentials supplied by the sandbox owner."}</small>
     <a className="auth-link" href="/register">Register another merchant</a>
   </form></main>;
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) return { error: { message: `PAYL did not return a response (${response.status})` } };
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { error: { message: "PAYL returned an invalid response. Please try again shortly." } };
+  }
 }

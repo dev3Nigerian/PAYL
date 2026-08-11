@@ -22,7 +22,7 @@ export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefille
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password, oauthHandoff }),
       });
-      const body = await response.json() as { handoffUrl?: string; error?: { message?: string } };
+      const body = await readJson(response) as { handoffUrl?: string; error?: { message?: string } };
       if (!response.ok) throw new Error(body.error?.message ?? "Sign-in failed");
       if (requested && isOAuthReturnTo(requested, apiOrigin) && body.handoffUrl) {
         const handoff = new URL(body.handoffUrl);
@@ -46,6 +46,16 @@ export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefille
     <button className="primary-button login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
     <p className="fineprint">{prefilled ? "Local sandbox credentials are prefilled." : "Use the credentials supplied by the sandbox owner."} Payment approval separately requires your six-digit authenticator code.</p>
   </form></main>;
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) return { error: { message: `PAYL did not return a response (${response.status})` } };
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { error: { message: "PAYL returned an invalid response. Please try again shortly." } };
+  }
 }
 
 function isLocalReturnTo(value: string): boolean {
