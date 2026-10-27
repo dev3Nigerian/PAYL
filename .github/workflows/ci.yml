@@ -22,9 +22,12 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Select a free test database port
+        run: |
+          port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+          echo "PAYL_TEST_DB_PORT=$port" >> "$GITHUB_ENV"
+          echo "PAYL_TEST_DATABASE_URL=postgresql://payl:payl_test_only@127.0.0.1:$port/payl_test" >> "$GITHUB_ENV"
       - run: docker compose up -d --wait postgres-test
       - run: pnpm typecheck
       - run: pnpm --filter @payl/api test
-        env:
-          PAYL_TEST_DATABASE_URL: postgresql://payl:payl_test_only@localhost:54330/payl_test
       - run: pnpm build

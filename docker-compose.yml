@@ -22,7 +22,7 @@ services:
       POSTGRES_PASSWORD: payl_test_only
       POSTGRES_DB: payl_test
     ports:
-      - "54330:5432"
+      - "127.0.0.1:${PAYL_TEST_DB_PORT:-54330}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U payl -d payl_test"]
       interval: 2s
