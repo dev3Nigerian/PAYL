@@ -25,6 +25,15 @@ const ConfigSchema = z.object({
   SANDBOX_MERCHANT_EMAIL: z.string().email().default("merchant@payl.local"),
   SANDBOX_MERCHANT_PASSWORD: z.string().min(12).default("MerchantDemo!2026"),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(12),
+  OPENAI_API_KEY: z.preprocess(
+    (value) => typeof value === "string" && !value.trim() ? undefined : value,
+    z.string().trim().min(1).optional(),
+  ),
+  OPENAI_MODEL: z.string().trim().min(1).default("gpt-6-luna"),
+  PAYPAL_SANDBOX_CLIENT_ID: z.string().trim().optional(),
+  PAYPAL_SANDBOX_CLIENT_SECRET: z.string().trim().optional(),
+  PAYPAL_SANDBOX_MERCHANT_ID: z.string().trim().optional(),
+  PAYPAL_SANDBOX_WEBHOOK_ID: z.string().trim().optional(),
 });
 
 export type Config = {
@@ -52,6 +61,9 @@ export type Config = {
   sandboxMerchantEmail: string;
   sandboxMerchantPassword: string;
   sessionTtlHours: number;
+  openaiApiKey: string | null;
+  openaiModel: string;
+  paypal: { clientId: string; clientSecret: string; merchantId: string; webhookId: string } | null;
 };
 
 function isLoopback(hostname: string): boolean {
@@ -70,6 +82,10 @@ function hostedSigningKey(value: string | undefined): Buffer | null {
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = ConfigSchema.parse(env);
+  const paypalValues = [parsed.PAYPAL_SANDBOX_CLIENT_ID, parsed.PAYPAL_SANDBOX_CLIENT_SECRET, parsed.PAYPAL_SANDBOX_MERCHANT_ID, parsed.PAYPAL_SANDBOX_WEBHOOK_ID];
+  if (paypalValues.some(Boolean) && paypalValues.some((value) => !value)) {
+    throw new Error("PayPal Sandbox requires client ID, client secret, merchant ID, and webhook ID together");
+  }
   const signingMasterKey = hostedSigningKey(parsed.PAYL_SIGNING_MASTER_KEY);
   const hosted = parsed.PAYL_DEPLOYMENT_PROFILE === "hosted_sandbox";
 
@@ -132,5 +148,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sandboxMerchantEmail: parsed.SANDBOX_MERCHANT_EMAIL.toLowerCase(),
     sandboxMerchantPassword: parsed.SANDBOX_MERCHANT_PASSWORD,
     sessionTtlHours: parsed.SESSION_TTL_HOURS,
+    openaiApiKey: parsed.OPENAI_API_KEY ?? null,
+    openaiModel: parsed.OPENAI_MODEL,
+    paypal: parsed.PAYPAL_SANDBOX_CLIENT_ID && parsed.PAYPAL_SANDBOX_CLIENT_SECRET && parsed.PAYPAL_SANDBOX_MERCHANT_ID && parsed.PAYPAL_SANDBOX_WEBHOOK_ID
+      ? { clientId: parsed.PAYPAL_SANDBOX_CLIENT_ID, clientSecret: parsed.PAYPAL_SANDBOX_CLIENT_SECRET, merchantId: parsed.PAYPAL_SANDBOX_MERCHANT_ID, webhookId: parsed.PAYPAL_SANDBOX_WEBHOOK_ID }
+      : null,
   };
 }

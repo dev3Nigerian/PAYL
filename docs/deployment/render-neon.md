@@ -101,6 +101,21 @@ Then verify this sequence:
 6. Complete a payment requiring approval and TOTP.
 7. Test fulfillment, cancellation, refund, payout, and reconciliation.
 
+### Enable in-app shopping chat
+
+In the Render environment settings for `payl-api-dev3nigerian`, set `OPENAI_API_KEY` as a secret. Optionally set `OPENAI_MODEL` (the default is `gpt-6-luna`), then redeploy the API service. Keep these variables off the consumer web service and out of `NEXT_PUBLIC_` variables. Sign in to the consumer dashboard and open **Shop with AI** to compare live merchant offers and review a quote before checkout. The hosted sandbox's wallet policy and separate MFA approval still govern payment.
+
+### Enable PayPal Sandbox funding and withdrawals
+
+1. In the [PayPal Developer Dashboard](https://developer.paypal.com/dashboard/), create or select a Sandbox business account for PAYL, a Sandbox personal buyer, and a Sandbox merchant recipient. Enable Payouts for the PAYL REST app. The business account needs enough Sandbox balance for payouts.
+2. Configure an app webhook at `https://payl-api-dev3nigerian.onrender.com/api/paypal/webhook`. Subscribe to `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.REFUNDED`, `PAYMENT.CAPTURE.REVERSED`, `PAYMENT.PAYOUTSBATCH.*`, and `PAYMENT.PAYOUTS-ITEM.*` events that PayPal offers for the app. Record its webhook ID.
+3. On the **API service only**, set `PAYPAL_SANDBOX_CLIENT_ID`, `PAYPAL_SANDBOX_CLIENT_SECRET`, `PAYPAL_SANDBOX_MERCHANT_ID` (the business account's merchant ID), and `PAYPAL_SANDBOX_WEBHOOK_ID`. Set all four together, then redeploy. The browser receives only the public client ID from the signed-in consumer dashboard.
+4. Sign in as the consumer and use **Wallet → Add funds to PAYL** with the Sandbox buyer. A completed capture credits the full amount once; PAYL records the PayPal fee separately. Use a different Sandbox account from the PAYL business account for buyer approval.
+5. Sign in as the merchant and use **Settlement → Withdrawal account** to save and confirm the recipient's PayPal email. Withdraw the full payable amount. PAYL keeps 10% in reserve and holds the rest as pending until PayPal confirms the item. The dashboard status action and lifecycle worker reconcile delayed payouts.
+6. Test a PAYL AI purchase separately. The agent's quote, policy approval, mandate, and ledger capture remain the purchase authority; PayPal is used only when funds enter or leave PAYL.
+
+These are virtual Sandbox transfers. A live launch requires platform approval, country and Payouts eligibility, custody and safeguarding design, and production credentials. The current [PayPal Payouts country table](https://developer.paypal.com/payouts/supported-features/) does not list Nigeria.
+
 ## 6. Connect Codex
 
 The hosted consumer MCP URL is:
@@ -113,7 +128,7 @@ Use `.codex/config.hosted.example.toml` as the template. The consumer dashboard'
 
 ## Operational boundaries
 
-- All balances and payouts are simulated.
+- Seeded balances and PayPal Sandbox transfers use virtual funds; the integration does not move live money.
 - The signing hierarchy is derived from a Render-managed secret. It is suitable for a hosted sandbox only, not a real payment system.
 - Render can restart or sleep free services at any time.
 - Webhook retries are not timely while the API is asleep.

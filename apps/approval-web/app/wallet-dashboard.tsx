@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import ShopWithAi from "./shop-with-ai";
+import PayPalTopup, { type Topup } from "./paypal-topup";
 
 export type Policy = {
   version: number;
@@ -12,6 +14,8 @@ export type Policy = {
 };
 
 export type WalletState = {
+  paypal: { enabled: boolean; clientId: string | null };
+  topups: Topup[];
   wallet: {
     consumerRef: string;
     displayName: string;
@@ -50,10 +54,11 @@ export type Connection = {
 
 export type McpEndpoints = { consumer: string };
 
-type Tab = "wallet" | "connect" | "activity" | "permissions" | "security";
+type Tab = "wallet" | "shop" | "connect" | "activity" | "permissions" | "security";
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: "wallet", label: "Wallet" },
+  { id: "shop", label: "Shop with AI" },
   { id: "connect", label: "Connect AI" },
   { id: "activity", label: "Activity" },
   { id: "permissions", label: "AI permissions" },
@@ -108,7 +113,7 @@ function ActivityList({
   refunding: string | null;
   cancelling: string | null;
 }) {
-  if (!state || state.orders.length === 0) return <p className="empty-state">No purchases yet. Connect an MCP client to create one.</p>;
+  if (!state || state.orders.length === 0) return <p className="empty-state">No purchases yet. Shop with PAYL AI or connect your own AI client to get started.</p>;
   return <div className="activity-list">{state.orders.map((order) => (
     <div className="activity-row" key={order.id}>
       <div className={order.status === "refunded" || order.status === "cancelled" ? "activity-icon refunded" : "activity-icon"}>{order.status === "refunded" ? "RF" : order.status === "cancelled" ? "CX" : "AI"}</div>
@@ -340,6 +345,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints }: { initia
 
   const headings: Record<Tab, [string, string]> = {
     wallet: ["Consumer wallet", "Good to see you."],
+    shop: ["Shop with AI", "Find what fits."],
     connect: ["AI connection", "Connect once, shop everywhere."],
     activity: ["Wallet activity", "Agent purchases"],
     permissions: ["AI permissions", "Set spending boundaries"],
@@ -373,6 +379,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints }: { initia
             <div><span>Available balance</span><strong>{money(initialState?.wallet.balances.available, initialState?.wallet.currency)}</strong><small>{initialState?.wallet.currency ?? "USD"} · Sandbox ledger</small></div>
             <div className="reserved"><span>Reserved by agents</span><strong>{money(initialState?.wallet.balances.reserved, initialState?.wallet.currency)}</strong><small>Released if a mandate expires</small></div>
           </section>
+          <PayPalTopup clientId={initialState?.paypal.clientId ?? null} topups={initialState?.topups ?? []} offline={!initialState} />
           <section className="wallet-grid">
             <article className="dashboard-panel">
               <div className="panel-title"><div><p className="section-label">Recent activity</p><h2>Agent purchases</h2></div><button className="text-button" type="button" onClick={() => setTab("activity")}>View all</button></div>
@@ -386,8 +393,10 @@ export default function WalletDashboard({ initialState, mcpEndpoints }: { initia
               <button className="primary-button full-button" type="button" onClick={() => setTab("permissions")}>Edit policy</button>
             </aside>
           </section>
-          <article className="dashboard-panel connect-callout"><div><p className="section-label">Plug-and-play MCP</p><h2>Connect your AI once</h2><p>Use one PAYL connection to see your balance, compare every merchant, and pay within your policy.</p></div><button className="primary-button" type="button" onClick={() => setTab("connect")}>Set up AI connection</button></article>
+          <article className="dashboard-panel connect-callout"><div><p className="section-label">Shop your way</p><h2>Explore PAYL with AI</h2><p>Chat here to compare live offers and review a purchase, or connect your own AI client through MCP.</p></div><div className="connect-actions"><button className="primary-button" type="button" onClick={() => setTab("shop")}>Open AI chat</button><button className="secondary-button" type="button" onClick={() => setTab("connect")}>Connect an AI client</button></div></article>
         </>}
+
+        {tab === "shop" && <ShopWithAi consumerRef={initialState?.wallet.consumerRef ?? "consumer_demo"} offline={!initialState} onAddFunds={() => setTab("wallet")} />}
 
         {tab === "connect" && <ConnectAiPanel endpoint={mcpEndpoints.consumer} connections={connections} onRevoke={(clientId, resource) => void revokeConnection(clientId, resource)} />}
 
@@ -395,6 +404,9 @@ export default function WalletDashboard({ initialState, mcpEndpoints }: { initia
           <div className="panel-title"><div><p className="section-label">Ledger activity</p><h2>Completed purchases</h2></div><span>{initialState?.orders.length ?? 0} total</span></div>
           {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
           <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} onCancel={(order) => void cancelOrder(order)} refunding={refunding} cancelling={cancelling} />
+          <div className="paypal-topup-history"><h3>PayPal funding</h3>
+            {(initialState?.topups.length ?? 0) === 0 ? <p className="empty-state">No PayPal top-ups yet.</p> : initialState?.topups.map((topup) => <div className="paypal-topup-row" key={topup.topupId}><div><strong>{money(topup.amountMinor, topup.currency)}</strong><span>{topup.status.replaceAll("_", " ")} · {new Date(topup.createdAt).toLocaleString("en-US")}</span>{topup.paypalCaptureId && <small>PayPal capture {topup.paypalCaptureId}</small>}{Number(topup.reversedAmountMinor) > 0 && <small>Reversed: {money(topup.reversedAmountMinor, topup.currency)}</small>}{Number(topup.providerFeeMinor) > 0 && <small>PayPal fee paid by PAYL: {money(topup.providerFeeMinor, topup.currency)}</small>}</div></div>)}
+          </div>
         </article>}
 
         {tab === "permissions" && <><section className="settings-grid section-panel">

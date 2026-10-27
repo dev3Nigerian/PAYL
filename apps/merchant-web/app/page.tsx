@@ -22,6 +22,7 @@ export default async function Page() {
     },
     reconciliation: { differenceMinor: "0", reconciled: true, expectedPositionMinor: "0", actualPositionMinor: "0", unbalancedJournalEntries: "0" },
     payouts: [],
+    paypal: { enabled: false, payoutEmail: null },
     webhook: null,
     outbox: {},
   };

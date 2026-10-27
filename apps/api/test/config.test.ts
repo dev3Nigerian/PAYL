@@ -2,6 +2,18 @@ import { describe, expect, it } from "vitest";
 import { createSecretDerivedKey, signPayload, verifyPayload } from "@payl/crypto";
 import { loadConfig } from "../src/config.js";
 
+describe("PayPal Sandbox configuration", () => {
+  it("requires the server credentials and webhook ID together", () => {
+    expect(() => loadConfig({ PAYPAL_SANDBOX_CLIENT_ID: "sandbox-client" })).toThrow("requires client ID");
+    expect(loadConfig({
+      PAYPAL_SANDBOX_CLIENT_ID: "sandbox-client",
+      PAYPAL_SANDBOX_CLIENT_SECRET: "sandbox-secret",
+      PAYPAL_SANDBOX_MERCHANT_ID: "sandbox-merchant",
+      PAYPAL_SANDBOX_WEBHOOK_ID: "sandbox-webhook",
+    }).paypal).toMatchObject({ clientId: "sandbox-client", merchantId: "sandbox-merchant", webhookId: "sandbox-webhook" });
+  });
+});
+
 const hostedEnvironment = {
   NODE_ENV: "production",
   PAYL_DEPLOYMENT_PROFILE: "hosted_sandbox",

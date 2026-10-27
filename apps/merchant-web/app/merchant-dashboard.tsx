@@ -24,7 +24,7 @@ export type MerchantState = {
     mcpUrl: string;
     networkMcpUrl: string;
     currency: string;
-    balances: { pendingFulfillment: string; payable: string; reserve: string };
+    balances: { pendingFulfillment: string; payable: string; reserve: string; payoutPending: string };
     totals: {
       grossSalesMinor: string;
       platformFeesMinor: string;
@@ -62,7 +62,8 @@ export type MerchantState = {
     operations: { pending_webhooks: string; dead_webhooks: string; payouts: string; audit_coverage: string };
   };
   reconciliation: { differenceMinor: string; reconciled: boolean; expectedPositionMinor: string; actualPositionMinor: string; unbalancedJournalEntries: string };
-  payouts: Array<{ payoutId: string; status: string; currency: string; sourcePayableMinor: string; reserveHeldMinor: string; paidAmountMinor: string; createdAt: string }>;
+  payouts: Array<{ payoutId: string; status: string; currency: string; sourcePayableMinor: string; reserveHeldMinor: string; paidAmountMinor: string; recipientEmail: string | null; paypalBatchId: string | null; paypalItemId: string | null; providerFeeMinor: string; createdAt: string }>;
+  paypal: { enabled: boolean; payoutEmail: string | null };
   webhook: { webhookId: string; url: string; active: boolean; updatedAt: string } | null;
   outbox: Record<string, string>;
 };
@@ -138,6 +139,9 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
   const [saving, setSaving] = useState(false);
   const [fulfilling, setFulfilling] = useState<string | null>(null);
   const [payoutWorking, setPayoutWorking] = useState(false);
+  const [payoutEmail, setPayoutEmail] = useState(initialState.paypal?.payoutEmail ?? "");
+  const [payoutEmailSaving, setPayoutEmailSaving] = useState(false);
+  const [checkingPayout, setCheckingPayout] = useState<string | null>(null);
   const [webhookUrl, setWebhookUrl] = useState(initialState.webhook?.url ?? "");
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
@@ -249,7 +253,9 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
   }
 
   async function createPayout() {
-    if (!window.confirm(`Create a sandbox payout from ${money(initialState.merchant?.balances.payable, currency)}? Ten percent will be retained as merchant reserve.`)) return;
+    const recipient = initialState.paypal?.payoutEmail;
+    if (!recipient) { setNotice({ kind: "error", message: "Save a PayPal payout email before withdrawing." }); return; }
+    if (!window.confirm(`Withdraw the full ${money(initialState.merchant?.balances.payable, currency)} payable balance to ${recipient} through PayPal Sandbox? PAYL retains 10% as merchant reserve. The withdrawal will remain pending until PayPal confirms it.`)) return;
     setPayoutWorking(true);
     setNotice(null);
     try {
@@ -264,6 +270,37 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Payout could not be created" });
       setPayoutWorking(false);
+    }
+  }
+
+  async function savePayoutEmail(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!window.confirm(`Use ${payoutEmail.trim()} for future PayPal Sandbox withdrawals? Existing pending withdrawals keep their original recipient.`)) return;
+    setPayoutEmailSaving(true);
+    setNotice(null);
+    try {
+      const response = await fetch("/api/merchant/payout-account", {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: payoutEmail.trim() }),
+      });
+      const body = await response.json() as { error?: { message?: string } };
+      if (!response.ok) throw new Error(body.error?.message ?? "PayPal payout email could not be saved");
+      window.location.reload();
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "PayPal payout email could not be saved" });
+      setPayoutEmailSaving(false);
+    }
+  }
+
+  async function checkPayout(payoutId: string) {
+    setCheckingPayout(payoutId);
+    try {
+      const response = await fetch(`/api/merchant/payouts/${encodeURIComponent(payoutId)}`, { cache: "no-store" });
+      const body = await response.json() as { error?: { message?: string } };
+      if (!response.ok) throw new Error(body.error?.message ?? "Payout status could not be checked");
+      window.location.reload();
+    } catch (error) {
+      setNotice({ kind: "error", message: error instanceof Error ? error.message : "Payout status could not be checked" });
+      setCheckingPayout(null);
     }
   }
 
@@ -366,12 +403,13 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
       </section>}
 
       {tab === "settlement" && <section className="settlement-grid section-space">
-        <article className={`settlement-hero ${merchantOwes ? "liability" : ""}`}><span>{merchantOwes ? "Amount owed to PAYL" : "Merchant payable"}</span><strong>{money(initialState.merchant?.balances.payable, currency)}</strong><small>{merchantOwes ? "Future sales and reserve offset this liability" : "Only fulfilled revenue is payout eligible"}</small><button className="primary-button" type="button" disabled={payoutWorking || Number(initialState.merchant?.balances.payable ?? "0") <= 0} onClick={() => void createPayout()}>{payoutWorking ? "Creating payout…" : "Create sandbox payout"}</button></article>
-        <article className="panel settlement-detail"><div><span>Pending fulfillment</span><strong>{money(initialState.merchant?.balances.pendingFulfillment, currency)}</strong></div><div><span>Merchant reserve</span><strong>{money(initialState.merchant?.balances.reserve, currency)}</strong></div><div><span>Consumer refunds</span><strong>-{money(initialState.merchant?.totals.refundedAmountMinor, currency)}</strong></div><div><span>PAYL fees retained</span><strong>-{money(initialState.merchant?.totals.platformFeesMinor, currency)}</strong></div><div><span>Net sales</span><strong>{money(initialState.merchant?.totals.netSalesMinor, currency)}</strong></div></article>
+        <article className={`settlement-hero ${merchantOwes ? "liability" : ""}`}><span>{merchantOwes ? "Amount owed to PAYL" : "Merchant payable"}</span><strong>{money(initialState.merchant?.balances.payable, currency)}</strong><small>{merchantOwes ? "Future sales and reserve offset this liability" : "Only fulfilled revenue is payout eligible"}</small><button className="primary-button" type="button" disabled={payoutWorking || !initialState.paypal?.enabled || !initialState.paypal?.payoutEmail || Number(initialState.merchant?.balances.payable ?? "0") <= 0} onClick={() => void createPayout()}>{payoutWorking ? "Submitting…" : "Withdraw through PayPal"}</button></article>
+        <form className="panel product-form" onSubmit={savePayoutEmail}><div className="wide"><p className="eyebrow">PayPal Sandbox</p><h2>Withdrawal account</h2><small>Save a separate PayPal recipient email. PAYL snapshots it for each withdrawal.</small></div><label className="wide"><span>PayPal payout email</span><input type="email" required value={payoutEmail} onChange={(event) => setPayoutEmail(event.target.value)} placeholder="merchant-sandbox@example.com" /></label><button className="primary-button" type="submit" disabled={payoutEmailSaving || !initialState.paypal?.enabled}>{payoutEmailSaving ? "Saving…" : "Save and confirm email"}</button>{!initialState.paypal?.enabled && <small>Configure PayPal Sandbox on the API to enable withdrawals.</small>}</form>
+        <article className="panel settlement-detail"><div><span>Pending fulfillment</span><strong>{money(initialState.merchant?.balances.pendingFulfillment, currency)}</strong></div><div><span>Pending PayPal withdrawal</span><strong>{money(initialState.merchant?.balances.payoutPending, currency)}</strong></div><div><span>Merchant reserve</span><strong>{money(initialState.merchant?.balances.reserve, currency)}</strong></div><div><span>Consumer refunds</span><strong>-{money(initialState.merchant?.totals.refundedAmountMinor, currency)}</strong></div><div><span>PAYL fees retained</span><strong>-{money(initialState.merchant?.totals.platformFeesMinor, currency)}</strong></div><div><span>Net sales</span><strong>{money(initialState.merchant?.totals.netSalesMinor, currency)}</strong></div></article>
         <article className="panel settlement-detail"><div><span>Expected merchant position</span><strong>{money(initialState.reconciliation?.expectedPositionMinor, currency)}</strong></div><div><span>Actual ledger position</span><strong>{money(initialState.reconciliation?.actualPositionMinor, currency)}</strong></div><div><span>Difference</span><strong>{money(initialState.reconciliation?.differenceMinor, currency)}</strong></div><div><span>Webhook queue</span><strong>{initialState.metrics?.operations.pending_webhooks ?? "0"} pending · {initialState.metrics?.operations.dead_webhooks ?? "0"} dead</strong></div><button className="secondary-button" type="button" onClick={() => void saveReconciliation()}>Save reconciliation snapshot</button></article>
         <form className="panel product-form" onSubmit={saveWebhook}><div className="wide"><p className="eyebrow">Signed operational callbacks</p><h2>Merchant webhook</h2><small>PAYL signs each JSON delivery with HMAC-SHA256 in x-payl-signature and retries failures up to eight times.</small></div><label className="wide"><span>HTTPS endpoint</span><input type="url" required placeholder="https://merchant.example/payl/events" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} /></label><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : initialState.webhook ? "Rotate secret and update" : "Enable webhook"}</button></form>
         {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
-        <article className="panel"><div className="panelhead"><div><p className="eyebrow">Payout history</p><h2>Sandbox batches</h2></div><span>{initialState.payouts?.length ?? 0} total</span></div>{(initialState.payouts?.length ?? 0) === 0 ? <p className="empty">No payouts yet.</p> : <div className="table">{initialState.payouts.map((payout) => <div className="row" key={payout.payoutId}><div><strong>{payout.payoutId}</strong><small>{new Date(payout.createdAt).toLocaleString("en-US")}</small></div><span>{money(payout.paidAmountMinor, payout.currency)}<small>Reserve held: {money(payout.reserveHeldMinor, payout.currency)}</small></span><span className="complete">{payout.status}</span></div>)}</div>}</article>
+        <article className="panel"><div className="panelhead"><div><p className="eyebrow">Withdrawal history</p><h2>PayPal Sandbox payouts</h2></div><span>{initialState.payouts?.length ?? 0} total</span></div>{(initialState.payouts?.length ?? 0) === 0 ? <p className="empty">No withdrawals yet.</p> : <div className="table">{initialState.payouts.map((payout) => <div className="row" key={payout.payoutId}><div><strong>{payout.payoutId}</strong><small>{new Date(payout.createdAt).toLocaleString("en-US")}</small><small>To {payout.recipientEmail ?? "—"}</small>{payout.paypalBatchId && <small>PayPal batch {payout.paypalBatchId}</small>}{payout.paypalItemId && <small>PayPal item {payout.paypalItemId}</small>}</div><span>{money(payout.paidAmountMinor, payout.currency)}<small>Reserve held: {money(payout.reserveHeldMinor, payout.currency)}</small><small>PayPal fee paid by PAYL: {money(payout.providerFeeMinor, payout.currency)}</small></span><span className="complete">{payout.status}{payout.status === "pending" && <button className="secondary-button" type="button" disabled={checkingPayout === payout.payoutId} onClick={() => void checkPayout(payout.payoutId)}>{checkingPayout === payout.payoutId ? "Checking…" : "Check status"}</button>}</span></div>)}</div>}</article>
       </section>}
     </section>
   </main>;

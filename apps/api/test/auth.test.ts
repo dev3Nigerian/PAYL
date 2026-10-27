@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { loadConfig } from "../src/config.js";
 import { createPool } from "../src/db.js";
@@ -19,6 +19,7 @@ const config = loadConfig({
   PUBLIC_BASE_URL: "http://localhost:4100",
   PAYL_ISSUER: "https://sandbox.payl.local",
   PAYL_DEV_KEYS: "true",
+  OPENAI_API_KEY: "test-api-key",
 });
 const pool = createPool(config);
 const service = new PaylService(pool, config);
@@ -35,8 +36,9 @@ beforeEach(async () => {
     `TRUNCATE TABLE
        oauth_revoked_access_tokens, oauth_refresh_tokens, oauth_grants, oauth_authorization_codes,
        oauth_consent_requests, oauth_clients, auth_sessions, auth_users,
-       auth_browser_handoffs,
+       auth_browser_handoffs, consumer_chat_messages, consumer_chat_conversations,
        reconciliation_reports, outbox_events, merchant_webhook_endpoints, payout_batches,
+       paypal_webhook_events, wallet_topups,
        merchant_settlement_configs, order_cancellations, payment_cancellations,
        audit_events, refunds, orders, payment_mandates, approval_challenges, payment_intents, quotes,
        journal_lines, journal_entries, ledger_accounts, spending_policies, offers, consumers, merchants
@@ -353,5 +355,113 @@ describe("PAYL identity and MCP authorization", () => {
       response_types: ["code"],
       token_endpoint_auth_method: "none",
     }).expect(400);
+  });
+
+  it("grounds in-app chat in matching live offers and isolates conversation history", async () => {
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail,
+      password: config.sandboxConsumerPassword,
+      role: "consumer",
+    }).expect(200);
+    const token = login.body.sessionToken as string;
+    const modelCall = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
+      output: [{ type: "message", content: [{ type: "output_text", text: "The Market Research Pack is $75." }] }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const sent = await request(app).post("/api/consumer/chat")
+        .set("authorization", `Bearer ${token}`)
+        .send({ message: "Show research offers under $80" }).expect(200);
+      expect(sent.body.message).toMatchObject({ role: "assistant", content: "The Market Research Pack is $75." });
+      expect(sent.body.offers).toHaveLength(1);
+      expect(sent.body.offers[0]).toMatchObject({ offerId: "offer_research_pack", priceMinor: "7500" });
+      const modelRequest = JSON.parse(String(modelCall.mock.calls[0]?.[1]?.body));
+      expect(modelRequest).toMatchObject({ model: "gpt-6-luna", store: false });
+      expect(modelRequest.input).toContain("offer_research_pack");
+      expect(modelRequest.input).not.toContain("signedQuote");
+
+      const history = await request(app).get("/api/consumer/chat")
+        .query({ conversationId: sent.body.conversationId })
+        .set("authorization", `Bearer ${token}`).expect(200);
+      expect(history.body.messages).toHaveLength(2);
+      expect(history.body.messages[1].offers).toEqual(sent.body.offers);
+      const followUp = await request(app).post("/api/consumer/chat")
+        .set("authorization", `Bearer ${token}`)
+        .send({ conversationId: sent.body.conversationId, message: "Can that one be refunded?" }).expect(200);
+      expect(followUp.body.offers).toHaveLength(1);
+      expect(followUp.body.offers[0].offerId).toBe("offer_research_pack");
+      const noMatch = await request(app).post("/api/consumer/chat")
+        .set("authorization", `Bearer ${token}`)
+        .send({ conversationId: sent.body.conversationId, message: "Show research offers under $20" }).expect(200);
+      expect(noMatch.body.offers).toEqual([]);
+      await expect(service.chat.getConversation("another_consumer", sent.body.conversationId))
+        .rejects.toMatchObject({ code: "CONVERSATION_NOT_FOUND" });
+      await request(app).get("/api/consumer/chat")
+        .query({ conversationId: sent.body.conversationId }).expect(401);
+    } finally {
+      modelCall.mockRestore();
+    }
+  });
+
+  it("requires explicit checkout confirmation and recovers a captured retry", async () => {
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail,
+      password: config.sandboxConsumerPassword,
+      role: "consumer",
+    }).expect(200);
+    const token = login.body.sessionToken as string;
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = 'consumer_demo'");
+    const quote = await request(app).post("/api/consumer/checkout/quote")
+      .set("authorization", `Bearer ${token}`)
+      .send({ merchantId: "merchant_demo", offerId: "offer_research_pack", quantity: 1 }).expect(200);
+    expect(quote.body.offer).toMatchObject({ merchantName: "Atlas Digital Market", priceMinor: "7500" });
+    await request(app).post("/api/consumer/checkout/quote")
+      .set("cookie", `payl_consumer_session=${token}`)
+      .send({ merchantId: "merchant_demo", offerId: "offer_research_pack", quantity: 1 }).expect(403);
+    const confirmInput = { signedQuote: quote.body.signedQuote, idempotencyKey: "in-app-checkout-001" };
+    const first = await request(app).post("/api/consumer/checkout/confirm")
+      .set("authorization", `Bearer ${token}`).send(confirmInput).expect(200);
+    expect(first.body.status).toBe("confirmed");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(new Date(quote.body.signedQuote.payload.expiresAt).getTime() + 1000);
+    let retry;
+    try {
+      retry = await request(app).post("/api/consumer/checkout/confirm")
+        .set("authorization", `Bearer ${token}`).send(confirmInput).expect(200);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(retry.body.order.orderId).toBe(first.body.order.orderId);
+    expect((await pool.query("SELECT id FROM orders")).rowCount).toBe(1);
+    await pool.query("UPDATE merchants SET status = 'suspended' WHERE id = 'merchant_demo'");
+    await request(app).post("/api/consumer/checkout/quote")
+      .set("authorization", `Bearer ${token}`)
+      .send({ merchantId: "merchant_demo", offerId: "offer_research_pack", quantity: 1 }).expect(404);
+  });
+
+  it("completes an in-app checkout only after human approval", async () => {
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail,
+      password: config.sandboxConsumerPassword,
+      role: "consumer",
+    }).expect(200);
+    const token = login.body.sessionToken as string;
+    const quote = await request(app).post("/api/consumer/checkout/quote")
+      .set("authorization", `Bearer ${token}`)
+      .send({ merchantId: "merchant_demo", offerId: "offer_research_pack", quantity: 1 }).expect(200);
+    const input = { signedQuote: quote.body.signedQuote, idempotencyKey: "in-app-checkout-approval-001" };
+    const pending = await request(app).post("/api/consumer/checkout/confirm")
+      .set("authorization", `Bearer ${token}`).send(input).expect(200);
+    expect(pending.body).toMatchObject({ status: "pending_approval", paymentId: expect.any(String), approvalUrl: expect.any(String) });
+    const completion = { ...input, paymentId: pending.body.paymentId };
+    const beforeApproval = await request(app).post("/api/consumer/checkout/complete")
+      .set("authorization", `Bearer ${token}`).send(completion).expect(200);
+    expect(beforeApproval.body.status).toBe("pending_approval");
+    const approval = await pool.query<{ id: string }>("SELECT id FROM approval_challenges WHERE payment_id = $1", [pending.body.paymentId]);
+    await request(app).post(`/api/approvals/${approval.rows[0]?.id}/decision`)
+      .set("authorization", `Bearer ${token}`)
+      .send({ decision: "approve", mfaCode: totpCode(config.sandboxConsumerTotpSecret) }).expect(200);
+    const afterApproval = await request(app).post("/api/consumer/checkout/complete")
+      .set("authorization", `Bearer ${token}`).send(completion).expect(200);
+    expect(afterApproval.body.status).toBe("confirmed");
+    expect(afterApproval.body.order.paymentId).toBe(pending.body.paymentId);
   });
 });

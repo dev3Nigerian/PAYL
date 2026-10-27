@@ -145,7 +145,7 @@ export class IdentityService {
            VALUES ($1, $2, $3, $4, $5, 'active')`,
           [merchantId, businessName, serverId, currency, `${merchantId}-sandbox-2026-01`],
         );
-        for (const accountType of ["pending_payable", "payable", "reserve"] as const) {
+        for (const accountType of ["pending_payable", "payable", "reserve", "payout_pending"] as const) {
           await client.query(
             `INSERT INTO ledger_accounts(id, owner_type, owner_id, account_type, currency)
              VALUES ($1, 'merchant', $2, $3, $4)`,

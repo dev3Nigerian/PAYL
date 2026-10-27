@@ -29,8 +29,9 @@ export class LifecycleWorkers {
     try {
       const expiry = await this.service.processExpirations();
       const outbox = await this.service.processOutbox();
-      if (Object.values(expiry).some((value) => value > 0) || Object.values(outbox).some((value) => value > 0)) {
-        this.logger.info({ expiry, outbox }, "lifecycle workers processed events");
+      const payouts = await this.service.reconcilePendingPayouts();
+      if (Object.values(expiry).some((value) => value > 0) || Object.values(outbox).some((value) => value > 0) || payouts > 0) {
+        this.logger.info({ expiry, outbox, payouts }, "lifecycle workers processed events");
       }
     } catch (error) {
       this.logger.error({ err: error }, "lifecycle worker tick failed");

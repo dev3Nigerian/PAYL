@@ -55,7 +55,7 @@ pnpm test
 pnpm build
 ```
 
-The database is preloaded with $1,000 of simulated consumer funds. No real money, card data, bank credentials, or reusable approval credentials are used. Fresh sandbox databases use USD; recreate an existing local sandbox database to remove historical signed artifacts.
+The database is preloaded with $1,000 of simulated consumer funds. With PayPal Sandbox configured, consumers can also add virtual USD through PayPal Checkout and merchants can withdraw virtual USD through PayPal Payouts. PAYL agent purchases still use signed quotes, spending policy, mandates, and its internal ledger. No real money, card data, bank credentials, or reusable approval credentials are used. Fresh sandbox databases use USD; recreate an existing local sandbox database to remove historical signed artifacts.
 
 ## Hosting the public sandbox
 
@@ -82,6 +82,14 @@ The consumer dashboard has working navigation for wallet balance, activity, AI p
 
 Policy updates are versioned and enforced by the wallet when `payment.prepare` is called. The auto-approve limit cannot exceed the transaction limit, and the transaction limit cannot exceed the daily limit.
 
+### Shop with AI in the consumer app
+
+The consumer dashboard also has **Shop with AI**. It retrieves currently published merchant offers, uses the retrieved catalog to answer shopping questions, and shows the catalog snapshots supplied to the model. Conversation history belongs to the signed-in consumer. An AI IDE or MCP client is not needed for this flow; **Connect AI** remains available for external clients.
+
+To enable generated chat answers, set `OPENAI_API_KEY` on the API service (or in the local API process environment). `OPENAI_MODEL` defaults to `gpt-6-luna` and can be changed. Keep the key on the API server; do not place it in a `NEXT_PUBLIC_` variable or the browser app. The app calls the [OpenAI Responses API](https://developers.openai.com/api/docs/guides/text) with retrieved offer data and does not ask the model to move money. Without a key, chat reports that it is unavailable; the rest of the sandbox still runs.
+
+For checkout, select an offer to get a fresh merchant-signed quote, review its amount and terms, then explicitly confirm the sandbox purchase. PAYL applies the existing wallet limits. If human approval is required, complete the separate MFA approval and return to the chat to finish the order. Price and terms come from the signed quote rather than the generated answer. The current retrieval corpus is the structured live catalog; add a search index or embeddings when the catalog and merchant content outgrow that approach.
+
 The merchant dashboard supports merchant self-registration at `http://localhost:3001/register` and multiple products under **Products**. Registration atomically provisions an isolated merchant identity, USD payable account, product catalog, signing identity, and merchant-specific MCP endpoint. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, can mark it refundable for 1 hour through 365 days, and can publish or hide it. Refund terms are signed into each quote, so later product changes do not alter an existing order. Published products immediately appear in `commerce.search_offers` through that merchant's MCP server.
 
 Merchants do not manually create a paid order. Orders are generated from authorized checkout so the merchant cannot accidentally record an unpaid sale:
@@ -99,7 +107,7 @@ Before fulfillment, the consumer may call `commerce.cancel_order` or use **Cance
 
 An eligible consumer can refund the order from **Activity** or through `payment.request_refund` on the unified `payl` MCP connection. PAYL returns the full captured amount to the consumer, debits the merchant by that gross amount, and retains the original PAYL fee. Refunds are full-order, immediate, signed, auditable, and idempotent. A merchant whose refundable order is returned can therefore show a negative payable balance equal to the retained fee.
 
-The merchant **Settlement** workspace separates pending-fulfillment revenue, payout-eligible payable, and reserve. A sandbox payout retains 10% in reserve, moves the remainder to simulated settlement clearing, and is idempotent. Refunds after payout consume reserve first and leave any remaining merchant liability visible. Live reconciliation compares order, cancellation, refund, and payout movements with the three merchant ledger balances. Merchant dashboards also expose quote conversion, approval latency, fulfillment status, refunds, webhook backlog, payout count, audit coverage, and journal integrity.
+The merchant **Settlement** workspace separates pending fulfillment revenue, payout eligible payable, pending PayPal withdrawal, and reserve. A withdrawal retains 10% in reserve and holds the remaining amount until PayPal Sandbox confirms the payout item. Failure or return restores the original payable amount. Refunds after payout consume reserve first and leave any remaining merchant liability visible. Reconciliation includes pending withdrawals. Merchant dashboards also expose quote conversion, approval latency, fulfillment status, refunds, webhook backlog, payout count, audit coverage, and journal integrity.
 
 Merchants can configure an HTTPS webhook in **Settlement**. Order, cancellation, refund, fulfillment, and payout events are written to a durable outbox in the same transaction as the business state. Delivery uses `x-payl-timestamp` plus `x-payl-signature: v1=<HMAC-SHA256>` and retries failures up to eight times. The signing secret is shown only when the webhook is created or rotated.
 
@@ -137,7 +145,8 @@ digital download merchant -> atomic capture + fulfillment -> signed order receip
 merchant -> async fulfillment -> pending revenue becomes payable + signed receipt
 consumer/system -> cancellation or expiry -> atomic release/reversal
 consumer -> policy-eligible full refund -> merchant gross debit + signed refund receipt
-merchant -> reserve-backed sandbox payout -> reconciliation report
+consumer -> PayPal Sandbox top-up -> full PAYL wallet credit
+merchant -> reserve-backed PayPal Sandbox withdrawal -> reconciliation report
 ```
 
 The current implementation includes Streamable HTTP MCP endpoints, OAuth authorization code with PKCE, scoped and audience-bound access tokens, revocable client grants, password sessions, per-approval TOTP, tenant-isolated dashboards, strict shared schemas, Ed25519 JWS signatures, PostgreSQL transactions, a balanced double-entry sandbox ledger, quote-bound mandates, idempotent capture/cancellation/refund/payout operations, expiry and outbox workers, signed merchant webhooks, reconciliation, pilot metrics, audit exports, and a reference MCP client.

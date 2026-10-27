@@ -30,6 +30,8 @@ import {
 import type { Config } from "./config.js";
 import { inTransaction } from "./db.js";
 import { DomainError, requireValue } from "./errors.js";
+import { ConsumerChatService } from "./chat.js";
+import { HttpPayPalGateway, type PayPalCapture, type PayPalGateway, type PayPalPayoutBatch } from "./paypal.js";
 
 export const DIGITAL_GOODS_TERMS_V1 = "PAYL sandbox digital goods terms v1. Simulated funds only. No live payment or settlement occurs.";
 
@@ -66,6 +68,39 @@ type PaymentRow = {
   mandate_id: string | null;
   expires_at: Date;
   approval_level: "policy_auto" | "human_mfa" | null;
+};
+
+type TopupRow = {
+  id: string;
+  consumer_id: string;
+  amount_minor: string;
+  currency: string;
+  status: string;
+  idempotency_key: string;
+  paypal_order_id: string | null;
+  paypal_capture_id: string | null;
+  provider_fee_minor: string;
+  reversed_amount_minor: string;
+  created_at: Date;
+  completed_at: Date | null;
+};
+
+type PayoutRow = {
+  id: string;
+  merchant_id: string;
+  currency: string;
+  source_payable_minor: string;
+  reserve_held_minor: string;
+  paid_amount_minor: string;
+  status: string;
+  idempotency_key: string;
+  paypal_recipient_email: string | null;
+  paypal_batch_id: string | null;
+  paypal_item_id: string | null;
+  provider_fee_minor: string;
+  submitted_at: Date | null;
+  created_at: Date;
+  completed_at: Date | null;
 };
 
 function newId(prefix: string): string {
@@ -142,12 +177,26 @@ function validatedRefundPolicy(
 
 export class PaylService {
   private readonly paylKey: SigningKey;
+  private readonly paypal: PayPalGateway | null;
+  readonly chat: ConsumerChatService;
 
   constructor(
     private readonly pool: pg.Pool,
     private readonly config: Config,
+    paypalGateway?: PayPalGateway | null,
   ) {
+    this.chat = new ConsumerChatService(pool, config);
     this.paylKey = this.signingKey("payl-mandate-issuer", "payl-sandbox-2026-01", "mandate");
+    this.paypal = paypalGateway === undefined
+      ? (config.paypal ? new HttpPayPalGateway(config.paypal) : null)
+      : paypalGateway;
+  }
+
+  paypalClientId(): string | null { return this.config.paypal?.clientId ?? null; }
+
+  private requirePayPal(): PayPalGateway {
+    if (!this.paypal) throw new DomainError("PAYPAL_NOT_CONFIGURED", "PayPal Sandbox is not configured", 503);
+    return this.paypal;
   }
 
   async assertReady(): Promise<void> {
@@ -200,8 +249,10 @@ export class PaylService {
         ["acct_merchant_payable", "merchant", this.config.sandboxMerchantId, "payable", "USD"],
         [`acct_${this.config.sandboxMerchantId}_pending_payable`, "merchant", this.config.sandboxMerchantId, "pending_payable", "USD"],
         [`acct_${this.config.sandboxMerchantId}_reserve`, "merchant", this.config.sandboxMerchantId, "reserve", "USD"],
+        [`acct_${this.config.sandboxMerchantId}_payout_pending`, "merchant", this.config.sandboxMerchantId, "payout_pending", "USD"],
         ["acct_platform_clearing", "platform", "payl", "clearing", "USD"],
         ["acct_platform_fee", "platform", "payl", "fee_revenue", "USD"],
+        ["acct_platform_provider_fee_expense", "platform", "payl", "provider_fee_expense", "USD"],
       ] as const;
       for (const account of accounts) {
         await client.query(
@@ -318,6 +369,7 @@ export class PaylService {
     return {
       offerId: offer.id,
       merchantId: offer.merchant_id,
+      merchantName: offer.merchant_name,
       name: offer.name,
       description: offer.description,
       priceMinor: offer.price_minor,
@@ -644,6 +696,7 @@ export class PaylService {
     signedQuote: SignedQuote;
     idempotencyKey: string;
   }): Promise<PaymentPrepareResult> {
+    const idempotencyKey = validatedIdempotencyKey(input.idempotencyKey, "Payment preparation");
     const signedQuote = SignedQuoteSchema.parse(input.signedQuote);
     await verifyPayload(signedQuote.jws, signedQuote.payload, this.merchantKey(signedQuote.payload.merchantId).publicKey);
     if (sha256Hex(signedQuote.jws) !== signedQuote.hash) {
@@ -656,9 +709,14 @@ export class PaylService {
     return inTransaction(this.pool, async (client) => {
       const existing = (await client.query<PaymentRow>(
         "SELECT * FROM payment_intents WHERE consumer_id = $1 AND idempotency_key = $2 FOR UPDATE",
-        [input.consumerId, input.idempotencyKey],
+        [input.consumerId, idempotencyKey],
       )).rows[0];
-      if (existing) return this.paymentPrepareResult(client, existing);
+      if (existing) {
+        if (existing.quote_id !== signedQuote.payload.quoteId) {
+          throw new DomainError("IDEMPOTENCY_CONFLICT", "This payment idempotency key belongs to another quote", 409);
+        }
+        return this.paymentPrepareResult(client, existing);
+      }
 
       const quote = requireValue(
         (await client.query<{
@@ -731,7 +789,7 @@ export class PaylService {
           amount.toString(),
           quote.currency,
           autoApproved ? "reserved" : "pending_approval",
-          input.idempotencyKey,
+          idempotencyKey,
           expiresAt,
         ],
       );
@@ -881,6 +939,7 @@ export class PaylService {
     );
     const result: Record<string, unknown> = {
       paymentId: payment.id,
+      quoteId: payment.quote_id,
       status: payment.status,
       expiresAt: payment.expires_at.toISOString(),
     };
@@ -892,6 +951,25 @@ export class PaylService {
       if (mandate) result.mandate = PaymentMandateSchema.parse({ payload: mandate.payload, jws: mandate.jws });
     }
     return result;
+  }
+
+  async completedCheckout(consumerId: string, idempotencyKey: string, signedQuote: SignedQuote): Promise<OrderStatus | null> {
+    const quote = SignedQuoteSchema.parse(signedQuote);
+    await verifyPayload(quote.jws, quote.payload, this.merchantKey(quote.payload.merchantId).publicKey);
+    if (sha256Hex(quote.jws) !== quote.hash) {
+      throw new DomainError("QUOTE_HASH_MISMATCH", "Signed quote hash is invalid");
+    }
+    const result = await this.pool.query<{ order_id: string; merchant_id: string }>(
+      `SELECT o.id AS order_id, o.merchant_id
+       FROM payment_intents p
+       JOIN quotes q ON q.id = p.quote_id
+       JOIN orders o ON o.payment_id = p.id
+       WHERE p.consumer_id = $1 AND p.idempotency_key = $2
+         AND p.quote_id = $3 AND q.quote_hash = $4`,
+      [consumerId, idempotencyKey, quote.payload.quoteId, quote.hash],
+    );
+    const row = result.rows[0];
+    return row ? this.loadOrderStatus(this.pool, row.order_id, row.merchant_id) : null;
   }
 
   async commitOrder(input: {
@@ -1364,18 +1442,175 @@ export class PaylService {
     return counts;
   }
 
-  async createPayout(input: { merchantId: string; idempotencyKey: string }): Promise<Record<string, unknown>> {
-    const idempotencyKey = validatedIdempotencyKey(input.idempotencyKey, "Payout");
+  async createTopup(input: { consumerId: string; amountMinor: unknown; idempotencyKey: unknown }): Promise<Record<string, unknown>> {
+    const paypal = this.requirePayPal();
+    const amount = validatedMinorAmount(input.amountMinor, "Top-up amount");
+    if (amount > 1_000_000n) throw new DomainError("TOPUP_LIMIT", "Top-up amount cannot exceed $10,000 in the sandbox");
+    const idempotencyKey = validatedIdempotencyKey(input.idempotencyKey, "Top-up");
+    const row = await inTransaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`topup:${input.consumerId}:${idempotencyKey}`]);
+      const existing = (await client.query<TopupRow>(
+        "SELECT * FROM wallet_topups WHERE consumer_id = $1 AND idempotency_key = $2 FOR UPDATE",
+        [input.consumerId, idempotencyKey],
+      )).rows[0];
+      if (existing) {
+        if (asBigInt(existing.amount_minor) !== amount) throw new DomainError("TOPUP_KEY_REUSED", "Top-up key belongs to a different amount", 409);
+        return existing;
+      }
+      return requireValue((await client.query<TopupRow>(
+        `INSERT INTO wallet_topups(id, consumer_id, amount_minor, currency, status, idempotency_key)
+         VALUES ($1, $2, $3, 'USD', 'creating', $4) RETURNING *`,
+        [newId("topup"), input.consumerId, amount.toString(), idempotencyKey],
+      )).rows[0], "TOPUP_FAILED", "Top-up could not be created");
+    });
+    if (row.paypal_order_id || row.status === "completed" || row.status === "cancelled" || row.status === "reversed") return this.topupResult(row);
+    const orderId = await paypal.createOrder({ topupId: row.id, amountMinor: amount });
+    const updated = requireValue((await this.pool.query<TopupRow>(
+      `UPDATE wallet_topups SET paypal_order_id = COALESCE(paypal_order_id, $2), status = 'pending', updated_at = now()
+       WHERE id = $1 AND status = 'creating' RETURNING *`,
+      [row.id, orderId],
+    )).rows[0], "TOPUP_NOT_READY", "Top-up is no longer available");
+    return this.topupResult(updated);
+  }
+
+  async captureTopup(consumerId: string, topupId: string): Promise<Record<string, unknown>> {
+    const paypal = this.requirePayPal();
+    const row = requireValue((await this.pool.query<TopupRow>(
+      "SELECT * FROM wallet_topups WHERE id = $1 AND consumer_id = $2",
+      [topupId, consumerId],
+    )).rows[0], "TOPUP_NOT_FOUND", "Top-up was not found");
+    if (row.status === "completed" || row.status === "reversed") return this.topupResult(row);
+    if ((row.status !== "pending" && row.status !== "cancelled") || !row.paypal_order_id) throw new DomainError("TOPUP_NOT_READY", "Top-up is not ready for capture", 409);
+    const capture = await paypal.captureOrder(row.paypal_order_id, row.id);
+    if (!capture || capture.status !== "COMPLETED") return this.topupResult(row);
+    return this.finalizeTopup(row.id, capture);
+  }
+
+  async topupStatus(consumerId: string, topupId: string): Promise<Record<string, unknown>> {
+    const row = requireValue((await this.pool.query<TopupRow>(
+      "SELECT * FROM wallet_topups WHERE id = $1 AND consumer_id = $2",
+      [topupId, consumerId],
+    )).rows[0], "TOPUP_NOT_FOUND", "Top-up was not found");
+    if ((row.status === "pending" || row.status === "cancelled") && row.paypal_order_id && this.paypal) {
+      const capture = await this.paypal.getOrderCapture(row.paypal_order_id);
+      if (capture?.status === "COMPLETED") return this.finalizeTopup(row.id, capture);
+    }
+    return this.topupResult(row);
+  }
+
+  async cancelTopup(consumerId: string, topupId: string): Promise<Record<string, unknown>> {
+    const row = (await this.pool.query<TopupRow>(
+      `UPDATE wallet_topups SET status = 'cancelled', updated_at = now()
+       WHERE id = $1 AND consumer_id = $2 AND status IN ('creating', 'pending') RETURNING *`,
+      [topupId, consumerId],
+    )).rows[0];
+    if (!row) throw new DomainError("TOPUP_NOT_CANCELLABLE", "Top-up cannot be cancelled", 409);
+    return this.topupResult(row);
+  }
+
+  async listTopups(consumerId: string): Promise<Record<string, unknown>[]> {
+    const result = await this.pool.query<TopupRow>(
+      "SELECT * FROM wallet_topups WHERE consumer_id = $1 ORDER BY created_at DESC LIMIT 25",
+      [consumerId],
+    );
+    return result.rows.map((row) => this.topupResult(row));
+  }
+
+  private async finalizeTopup(topupId: string, capture: PayPalCapture): Promise<Record<string, unknown>> {
+    if (capture.status !== "COMPLETED") throw new DomainError("TOPUP_NOT_CAPTURED", "PayPal has not completed this capture", 409);
     return inTransaction(this.pool, async (client) => {
+      const row = requireValue((await client.query<TopupRow>(
+        "SELECT * FROM wallet_topups WHERE id = $1 FOR UPDATE",
+        [topupId],
+      )).rows[0], "TOPUP_NOT_FOUND", "Top-up was not found");
+      if (row.status === "completed" || row.status === "reversed") {
+        if (row.paypal_capture_id !== capture.captureId) throw new DomainError("TOPUP_CAPTURE_MISMATCH", "Top-up capture does not match", 409);
+        return this.topupResult(row);
+      }
+      if ((row.status !== "pending" && row.status !== "cancelled") || row.paypal_order_id !== capture.orderId) {
+        throw new DomainError("TOPUP_NOT_READY", "Top-up is not available for credit", 409);
+      }
+      if (capture.amountMinor !== asBigInt(row.amount_minor) || capture.currency !== row.currency ||
+        capture.merchantId !== this.config.paypal?.merchantId || capture.referenceId !== row.id) {
+        throw new DomainError("TOPUP_CAPTURE_MISMATCH", "PayPal capture details do not match the top-up", 409);
+      }
+      const accounts = await client.query<{ id: string; owner_type: string; account_type: string }>(
+        `SELECT id, owner_type, account_type FROM ledger_accounts
+         WHERE currency = 'USD' AND (
+           (owner_type = 'consumer' AND owner_id = $1 AND account_type = 'available') OR
+           (owner_type = 'platform' AND owner_id = 'payl' AND account_type IN ('clearing', 'provider_fee_expense'))
+         ) ORDER BY id FOR UPDATE`,
+        [row.consumer_id],
+      );
+      const account = (owner: string, kind: string) => requireValue(
+        accounts.rows.find((item) => item.owner_type === owner && item.account_type === kind)?.id,
+        "TOPUP_ACCOUNT_MISSING", "Top-up ledger account is missing",
+      );
+      const amount = asBigInt(row.amount_minor);
+      await this.postJournal(client, {
+        eventType: "paypal_wallet_topup",
+        idempotencyKey: `paypal-topup:${capture.captureId}`,
+        referenceType: "topup",
+        referenceId: row.id,
+        lines: [
+          { accountId: account("consumer", "available"), amountMinor: amount },
+          { accountId: account("platform", "clearing"), amountMinor: -amount },
+        ],
+      });
+      if (capture.feeMinor > 0n) {
+        await this.postJournal(client, {
+          eventType: "paypal_topup_fee",
+          idempotencyKey: `paypal-topup-fee:${capture.captureId}`,
+          referenceType: "topup",
+          referenceId: row.id,
+          lines: [
+            { accountId: account("platform", "provider_fee_expense"), amountMinor: -capture.feeMinor },
+            { accountId: account("platform", "clearing"), amountMinor: capture.feeMinor },
+          ],
+        });
+      }
+      const updated = requireValue((await client.query<TopupRow>(
+        `UPDATE wallet_topups SET status = 'completed', paypal_capture_id = $2,
+         provider_fee_minor = $3, completed_at = now(), updated_at = now()
+         WHERE id = $1 RETURNING *`,
+        [row.id, capture.captureId, capture.feeMinor.toString()],
+      )).rows[0], "TOPUP_FAILED", "Top-up could not be finalized");
+      await this.audit(client, row.id, "consumer", row.consumer_id, "topup.completed", "topup", row.id, {
+        amountMinor: row.amount_minor, paypalOrderId: capture.orderId, paypalCaptureId: capture.captureId,
+      });
+      return this.topupResult(updated);
+    });
+  }
+
+  private topupResult(row: TopupRow): Record<string, unknown> {
+    return {
+      topupId: row.id,
+      amountMinor: row.amount_minor,
+      currency: row.currency,
+      status: row.status,
+      paypalOrderId: row.paypal_order_id,
+      paypalCaptureId: row.paypal_capture_id,
+      providerFeeMinor: row.provider_fee_minor,
+      reversedAmountMinor: row.reversed_amount_minor,
+      createdAt: row.created_at.toISOString(),
+      completedAt: row.completed_at?.toISOString() ?? null,
+    };
+  }
+
+  async createPayout(input: { merchantId: string; idempotencyKey: string }): Promise<Record<string, unknown>> {
+    this.requirePayPal();
+    const idempotencyKey = validatedIdempotencyKey(input.idempotencyKey, "Payout");
+    const row = await inTransaction(this.pool, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`payout:${input.merchantId}:${idempotencyKey}`]);
-      const existing = (await client.query<{
-        id: string; currency: string; source_payable_minor: string; reserve_held_minor: string; paid_amount_minor: string; status: string; created_at: Date;
-      }>("SELECT * FROM payout_batches WHERE merchant_id = $1 AND idempotency_key = $2", [input.merchantId, idempotencyKey])).rows[0];
-      if (existing) return this.payoutResult(existing);
+      const existing = (await client.query<PayoutRow>(
+        "SELECT * FROM payout_batches WHERE merchant_id = $1 AND idempotency_key = $2 FOR UPDATE",
+        [input.merchantId, idempotencyKey],
+      )).rows[0];
+      if (existing) return existing;
 
       const config = requireValue(
-        (await client.query<{ reserve_bps: number; payouts_enabled: boolean; currency: string }>(
-          `SELECT s.reserve_bps, s.payouts_enabled, m.currency
+        (await client.query<{ reserve_bps: number; payouts_enabled: boolean; currency: string; paypal_payout_email: string | null }>(
+          `SELECT s.reserve_bps, s.payouts_enabled, s.paypal_payout_email, m.currency
            FROM merchant_settlement_configs s JOIN merchants m ON m.id = s.merchant_id
            WHERE s.merchant_id = $1 FOR UPDATE OF s`,
           [input.merchantId],
@@ -1384,11 +1619,12 @@ export class PaylService {
         "Merchant settlement is not configured",
       );
       if (!config.payouts_enabled) throw new DomainError("PAYOUTS_DISABLED", "Merchant payouts are disabled", 409);
+      if (!config.paypal_payout_email) throw new DomainError("PAYOUT_ACCOUNT_REQUIRED", "Set a PayPal payout email before withdrawing", 409);
+      if (config.currency !== "USD") throw new DomainError("PAYOUT_CURRENCY_UNSUPPORTED", "PayPal Sandbox payouts require USD", 409);
       const accounts = await client.query<{ id: string; owner_type: string; account_type: string }>(
         `SELECT id, owner_type, account_type FROM ledger_accounts
          WHERE currency = $1 AND (
-           (owner_type = 'merchant' AND owner_id = $2 AND account_type IN ('payable', 'reserve')) OR
-           (owner_type = 'platform' AND owner_id = 'payl' AND account_type = 'clearing')
+           (owner_type = 'merchant' AND owner_id = $2 AND account_type IN ('payable', 'reserve', 'payout_pending'))
          ) ORDER BY id FOR UPDATE`,
         [config.currency, input.merchantId],
       );
@@ -1404,36 +1640,308 @@ export class PaylService {
       const paid = payable - reserveHeld;
       const payoutId = newId("payout");
       await this.postJournal(client, {
-        eventType: "merchant_payout",
-        idempotencyKey: `payout:${input.merchantId}:${idempotencyKey}`,
+        eventType: "merchant_payout_pending",
+        idempotencyKey: `payout-hold:${payoutId}`,
         referenceType: "payout",
         referenceId: payoutId,
         lines: [
           { accountId: payableId, amountMinor: -payable },
           { accountId: accountId("merchant", "reserve"), amountMinor: reserveHeld },
-          { accountId: accountId("platform", "clearing"), amountMinor: paid },
+          { accountId: accountId("merchant", "payout_pending"), amountMinor: paid },
         ].filter((line) => line.amountMinor !== 0n),
       });
-      const createdAt = new Date();
       const row = requireValue(
-        (await client.query<{
-          id: string; currency: string; source_payable_minor: string; reserve_held_minor: string; paid_amount_minor: string; status: string; created_at: Date;
-        }>(
+        (await client.query<PayoutRow>(
           `INSERT INTO payout_batches(
              id, merchant_id, currency, source_payable_minor, reserve_held_minor, paid_amount_minor,
-             status, idempotency_key, created_at, completed_at
-           ) VALUES ($1, $2, $3, $4, $5, $6, 'paid', $7, $8, $8)
+             status, idempotency_key, paypal_recipient_email
+           ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)
            RETURNING *`,
-          [payoutId, input.merchantId, config.currency, payable.toString(), reserveHeld.toString(), paid.toString(), idempotencyKey, createdAt],
+          [payoutId, input.merchantId, config.currency, payable.toString(), reserveHeld.toString(), paid.toString(), idempotencyKey, config.paypal_payout_email],
         )).rows[0],
         "PAYOUT_FAILED",
         "Payout record could not be created",
       );
-      await this.audit(client, payoutId, "merchant", input.merchantId, "payout.paid", "payout", payoutId, {
-        paidAmountMinor: paid.toString(), reserveHeldMinor: reserveHeld.toString(), currency: config.currency,
+      await this.audit(client, payoutId, "merchant", input.merchantId, "payout.pending", "payout", payoutId, {
+        paidAmountMinor: paid.toString(), reserveHeldMinor: reserveHeld.toString(), currency: config.currency, recipientEmail: config.paypal_payout_email,
       });
-      await this.enqueueOutbox(client, input.merchantId, "payout.paid", "payout", payoutId, this.payoutResult(row), `payout-paid:${payoutId}`);
-      return this.payoutResult(row);
+      return row;
+    });
+    if (row.status === "pending") {
+      try { return await this.submitOrReconcilePayout(row.id); } catch { /* a status request retries the same sender batch */ }
+    }
+    return this.payoutResult(row);
+  }
+
+  async setPayoutEmail(merchantId: string, value: unknown): Promise<{ email: string }> {
+    const email = typeof value === "string" ? value.trim().toLowerCase() : "";
+    if (email.length > 127 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new DomainError("INVALID_PAYOUT_EMAIL", "Enter a valid PayPal payout email");
+    }
+    const updated = (await this.pool.query<{ paypal_payout_email: string }>(
+      `UPDATE merchant_settlement_configs SET paypal_payout_email = $2, updated_at = now()
+       WHERE merchant_id = $1 RETURNING paypal_payout_email`,
+      [merchantId, email],
+    )).rows[0];
+    requireValue(updated, "MERCHANT_NOT_FOUND", "Merchant was not found");
+    await this.audit(this.pool, merchantId, "merchant", merchantId, "payout.email_updated", "merchant", merchantId, { email });
+    return { email };
+  }
+
+  async payoutStatus(merchantId: string, payoutId: string): Promise<Record<string, unknown>> {
+    const row = requireValue((await this.pool.query<PayoutRow>(
+      "SELECT * FROM payout_batches WHERE id = $1 AND merchant_id = $2",
+      [payoutId, merchantId],
+    )).rows[0], "PAYOUT_NOT_FOUND", "Payout was not found");
+    if (row.status === "failed" || (row.status === "paid" && !row.paypal_batch_id)) return this.payoutResult(row);
+    return this.submitOrReconcilePayout(row.id);
+  }
+
+  async reconcilePendingPayouts(merchantId?: string): Promise<number> {
+    if (!this.paypal) return 0;
+    const pending = await this.pool.query<{ id: string }>(
+      `SELECT id FROM payout_batches WHERE status = 'pending'
+       AND ($1::text IS NULL OR merchant_id = $1)
+       AND updated_at < now() - interval '30 seconds'
+       ORDER BY created_at LIMIT 5`,
+      [merchantId ?? null],
+    );
+    let processed = 0;
+    for (const row of pending.rows) {
+      try { await this.submitOrReconcilePayout(row.id); processed += 1; } catch { /* next poll will retry */ }
+    }
+    return processed;
+  }
+
+  private async submitOrReconcilePayout(payoutId: string): Promise<Record<string, unknown>> {
+    const paypal = this.requirePayPal();
+    let row = requireValue((await this.pool.query<PayoutRow>("SELECT * FROM payout_batches WHERE id = $1", [payoutId])).rows[0],
+      "PAYOUT_NOT_FOUND", "Payout was not found");
+    if (row.status === "failed" || (row.status === "paid" && !row.paypal_batch_id)) return this.payoutResult(row);
+    if (!row.paypal_recipient_email) throw new DomainError("PAYOUT_ACCOUNT_REQUIRED", "PayPal payout email is missing", 409);
+    const recipientEmail = row.paypal_recipient_email;
+    if (!row.paypal_batch_id) {
+      if (row.submitted_at && Date.now() - row.submitted_at.getTime() >= 29 * 24 * 60 * 60 * 1000) {
+        throw new DomainError("PAYOUT_REVIEW_REQUIRED", "PayPal payout needs manual reconciliation before another submission", 409);
+      }
+      row = requireValue((await this.pool.query<PayoutRow>(
+        `UPDATE payout_batches SET submitted_at = COALESCE(submitted_at, now()), updated_at = now()
+         WHERE id = $1 AND status = 'pending' RETURNING *`, [row.id],
+      )).rows[0], "PAYOUT_NOT_FOUND", "Payout was not found");
+      const batchId = await paypal.createPayout({
+        payoutId: row.id, amountMinor: asBigInt(row.paid_amount_minor), recipientEmail,
+      });
+      row = requireValue((await this.pool.query<PayoutRow>(
+        `UPDATE payout_batches SET paypal_batch_id = COALESCE(paypal_batch_id, $2),
+         submitted_at = COALESCE(submitted_at, now()), updated_at = now()
+         WHERE id = $1 AND status = 'pending' RETURNING *`,
+        [row.id, batchId],
+      )).rows[0], "PAYOUT_NOT_FOUND", "Payout was not found");
+    }
+    const batch = await paypal.getPayoutBatch(requireValue(row.paypal_batch_id, "PAYOUT_NOT_SUBMITTED", "Payout batch is missing"));
+    return this.applyPayoutBatch(row.id, batch);
+  }
+
+  private async applyPayoutBatch(payoutId: string, batch: PayPalPayoutBatch): Promise<Record<string, unknown>> {
+    return inTransaction(this.pool, async (client) => {
+      const row = requireValue((await client.query<PayoutRow>(
+        "SELECT * FROM payout_batches WHERE id = $1 FOR UPDATE", [payoutId],
+      )).rows[0], "PAYOUT_NOT_FOUND", "Payout was not found");
+      if (row.paypal_batch_id !== batch.batchId) throw new DomainError("PAYOUT_BATCH_MISMATCH", "PayPal payout batch does not match", 409);
+      const item = batch.items.find((candidate) => candidate.senderItemId === row.id);
+      if (item && (item.amountMinor !== asBigInt(row.paid_amount_minor) || item.currency !== row.currency ||
+        item.recipientEmail.toLowerCase() !== row.paypal_recipient_email?.toLowerCase())) {
+        throw new DomainError("PAYOUT_ITEM_MISMATCH", "PayPal payout item does not match the withdrawal", 409);
+      }
+      const status = item?.status ?? (["DENIED", "CANCELED"].includes(batch.status) ? "FAILED" : "PENDING");
+      const paid = status === "SUCCESS";
+      const failed = ["FAILED", "RETURNED", "BLOCKED", "REFUNDED", "REVERSED", "CANCELED"].includes(status);
+      if (!paid && !failed) return this.payoutResult(row);
+      if (row.status === "failed") return this.payoutResult(row);
+      const accounts = await client.query<{ id: string; owner_type: string; account_type: string }>(
+        `SELECT id, owner_type, account_type FROM ledger_accounts
+         WHERE currency = $1 AND ((owner_type = 'merchant' AND owner_id = $2
+           AND account_type IN ('payable', 'reserve', 'payout_pending')) OR
+           (owner_type = 'platform' AND owner_id = 'payl' AND account_type IN ('clearing', 'provider_fee_expense')))
+         ORDER BY id FOR UPDATE`,
+        [row.currency, row.merchant_id],
+      );
+      const account = (owner: string, kind: string) => requireValue(
+        accounts.rows.find((candidate) => candidate.owner_type === owner && candidate.account_type === kind)?.id,
+        "PAYOUT_ACCOUNT_MISSING", "Payout ledger account is missing",
+      );
+      const amount = asBigInt(row.paid_amount_minor);
+      const reserve = asBigInt(row.reserve_held_minor);
+      if (paid && row.status === "pending") {
+        await this.postJournal(client, {
+          eventType: "merchant_payout_paid", idempotencyKey: `payout-paid:${row.id}`,
+          referenceType: "payout", referenceId: row.id,
+          lines: [
+            { accountId: account("merchant", "payout_pending"), amountMinor: -amount },
+            { accountId: account("platform", "clearing"), amountMinor: amount },
+          ],
+        });
+      } else if (failed) {
+        await this.postJournal(client, {
+          eventType: row.status === "paid" ? "merchant_payout_returned" : "merchant_payout_failed",
+          idempotencyKey: `payout-release:${row.id}`, referenceType: "payout", referenceId: row.id,
+          lines: [
+            { accountId: account(row.status === "paid" ? "platform" : "merchant", row.status === "paid" ? "clearing" : "payout_pending"), amountMinor: -amount },
+            { accountId: account("merchant", "reserve"), amountMinor: -reserve },
+            { accountId: account("merchant", "payable"), amountMinor: asBigInt(row.source_payable_minor) },
+          ].filter((line) => line.amountMinor !== 0n),
+        });
+      }
+      if (item && item.feeMinor > asBigInt(row.provider_fee_minor)) {
+        const additional = item.feeMinor - asBigInt(row.provider_fee_minor);
+        await this.postJournal(client, {
+          eventType: "paypal_payout_fee", idempotencyKey: `payout-fee:${row.id}:${item.feeMinor}`,
+          referenceType: "payout", referenceId: row.id,
+          lines: [
+            { accountId: account("platform", "provider_fee_expense"), amountMinor: -additional },
+            { accountId: account("platform", "clearing"), amountMinor: additional },
+          ],
+        });
+      }
+      if (row.status === "paid" && paid) {
+        const updated = requireValue((await client.query<PayoutRow>(
+          `UPDATE payout_batches SET paypal_item_id = COALESCE(paypal_item_id, $2),
+           provider_fee_minor = GREATEST(provider_fee_minor, $3::bigint), updated_at = now()
+           WHERE id = $1 RETURNING *`,
+          [row.id, item?.itemId ?? null, item?.feeMinor.toString() ?? "0"],
+        )).rows[0], "PAYOUT_FAILED", "Payout could not be updated");
+        return this.payoutResult(updated);
+      }
+      const nextStatus = paid ? "paid" : "failed";
+      const updated = requireValue((await client.query<PayoutRow>(
+        `UPDATE payout_batches SET status = $2, paypal_item_id = COALESCE(paypal_item_id, $3),
+         provider_fee_minor = $4, completed_at = now(), updated_at = now()
+         WHERE id = $1 RETURNING *`,
+        [row.id, nextStatus, item?.itemId ?? null, item && item.feeMinor > asBigInt(row.provider_fee_minor) ? item.feeMinor.toString() : row.provider_fee_minor],
+      )).rows[0], "PAYOUT_FAILED", "Payout could not be finalized");
+      await this.audit(client, row.id, "merchant", row.merchant_id, `payout.${nextStatus}`, "payout", row.id, {
+        paypalBatchId: batch.batchId, paypalItemId: item?.itemId ?? null, providerStatus: status,
+      });
+      await this.enqueueOutbox(client, row.merchant_id, `payout.${nextStatus}`, "payout", row.id,
+        this.payoutResult(updated), `payout-${nextStatus}:${row.id}`);
+      return this.payoutResult(updated);
+    });
+  }
+
+  async handlePayPalWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): Promise<void> {
+    const paypal = this.requirePayPal();
+    let event: {
+      id?: string;
+      event_type?: string;
+      resource?: {
+        id?: string;
+        amount?: { currency_code?: string; value?: string };
+        payout_batch_id?: string;
+        payout_item_id?: string;
+        batch_header?: { payout_batch_id?: string };
+        links?: Array<{ rel?: string; href?: string }>;
+        supplementary_data?: { related_ids?: { order_id?: string; capture_id?: string } };
+      };
+    };
+    try { event = JSON.parse(rawBody.toString("utf8")) as typeof event; }
+    catch { throw new DomainError("PAYPAL_WEBHOOK_INVALID", "PayPal webhook body is invalid", 400); }
+    if (!event.id || !event.event_type) throw new DomainError("PAYPAL_WEBHOOK_INVALID", "PayPal webhook event is incomplete", 400);
+    if (!await paypal.verifyWebhook(rawBody, headers)) {
+      throw new DomainError("PAYPAL_WEBHOOK_UNVERIFIED", "PayPal webhook signature is invalid", 400);
+    }
+    const processed = await this.pool.query("SELECT 1 FROM paypal_webhook_events WHERE id = $1", [event.id]);
+    if (processed.rowCount) return;
+    const resource = event.resource;
+    if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
+      const orderId = resource?.supplementary_data?.related_ids?.order_id;
+      if (orderId) {
+        const topup = (await this.pool.query<TopupRow>(
+          "SELECT * FROM wallet_topups WHERE paypal_order_id = $1", [orderId],
+        )).rows[0];
+        if (topup && (topup.status === "pending" || topup.status === "cancelled")) {
+          const capture = await paypal.getOrderCapture(orderId);
+          if (capture?.status === "COMPLETED") await this.finalizeTopup(topup.id, capture);
+        }
+      }
+    } else if (event.event_type === "PAYMENT.CAPTURE.REFUNDED" || event.event_type === "PAYMENT.CAPTURE.REVERSED") {
+      const upLink = resource?.links?.find((link) => link.rel === "up" && link.href?.includes("/v2/payments/captures/"));
+      let linkedCaptureId: string | undefined;
+      try { linkedCaptureId = upLink?.href ? /^\/v2\/payments\/captures\/([^/]+)$/.exec(new URL(upLink.href).pathname)?.[1] : undefined; }
+      catch { linkedCaptureId = undefined; }
+      const captureId = resource?.supplementary_data?.related_ids?.capture_id ?? linkedCaptureId ??
+        (event.event_type === "PAYMENT.CAPTURE.REVERSED" ? resource?.id : undefined);
+      const amount = resource?.amount;
+      if (captureId && amount?.currency_code === "USD" && amount.value) {
+        const [whole, fractional = ""] = amount.value.split(".");
+        if (!/^\d+$/.test(whole ?? "") || !/^\d{0,2}$/.test(fractional)) {
+          throw new DomainError("PAYPAL_WEBHOOK_INVALID", "PayPal reversal amount is invalid", 400);
+        }
+        const amountMinor = BigInt(whole!) * 100n + BigInt(fractional.padEnd(2, "0"));
+        await this.reverseTopup(captureId, amountMinor, event.id, event.event_type);
+        return;
+      }
+    } else if (event.event_type.startsWith("PAYMENT.PAYOUTS")) {
+      const batchId = resource?.payout_batch_id ?? resource?.batch_header?.payout_batch_id;
+      const itemId = resource?.payout_item_id ??
+        (event.event_type.startsWith("PAYMENT.PAYOUTS-ITEM") ? resource?.id : undefined);
+      if (batchId || itemId) {
+        const payout = (await this.pool.query<PayoutRow>(
+          "SELECT * FROM payout_batches WHERE paypal_batch_id = $1 OR paypal_item_id = $2", [batchId ?? null, itemId ?? null],
+        )).rows[0];
+        if (payout) await this.submitOrReconcilePayout(payout.id);
+      }
+    }
+    await this.pool.query(
+      "INSERT INTO paypal_webhook_events(id, event_type, resource_id) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING",
+      [event.id, event.event_type, resource?.id ?? null],
+    );
+  }
+
+  private async reverseTopup(captureId: string, amountMinor: bigint, eventId: string, eventType: string): Promise<void> {
+    if (amountMinor <= 0n) throw new DomainError("PAYPAL_WEBHOOK_INVALID", "PayPal reversal amount is invalid", 400);
+    await inTransaction(this.pool, async (client) => {
+      const inserted = await client.query(
+        `INSERT INTO paypal_webhook_events(id, event_type, resource_id) VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO NOTHING RETURNING id`,
+        [eventId, eventType, captureId],
+      );
+      if (!inserted.rowCount) return;
+      const row = (await client.query<TopupRow>(
+        "SELECT * FROM wallet_topups WHERE paypal_capture_id = $1 FOR UPDATE", [captureId],
+      )).rows[0];
+      if (!row || (row.status !== "completed" && row.status !== "reversed")) return;
+      const reversed = asBigInt(row.reversed_amount_minor);
+      if (reversed + amountMinor > asBigInt(row.amount_minor)) {
+        throw new DomainError("TOPUP_REVERSAL_EXCEEDS_CAPTURE", "PayPal reversal exceeds the original capture", 409);
+      }
+      const accounts = await client.query<{ id: string; owner_type: string; account_type: string }>(
+        `SELECT id, owner_type, account_type FROM ledger_accounts
+         WHERE currency = 'USD' AND ((owner_type = 'consumer' AND owner_id = $1 AND account_type = 'available') OR
+         (owner_type = 'platform' AND owner_id = 'payl' AND account_type = 'clearing')) ORDER BY id FOR UPDATE`,
+        [row.consumer_id],
+      );
+      const available = requireValue(accounts.rows.find((item) => item.owner_type === "consumer")?.id,
+        "TOPUP_ACCOUNT_MISSING", "Consumer wallet is missing");
+      const clearing = requireValue(accounts.rows.find((item) => item.owner_type === "platform")?.id,
+        "TOPUP_ACCOUNT_MISSING", "PAYL clearing account is missing");
+      await this.postJournal(client, {
+        eventType: "paypal_topup_reversal", idempotencyKey: `paypal-reversal:${eventId}`,
+        referenceType: "topup", referenceId: row.id,
+        lines: [
+          { accountId: available, amountMinor: -amountMinor },
+          { accountId: clearing, amountMinor },
+        ],
+      });
+      const total = reversed + amountMinor;
+      await client.query(
+        `UPDATE wallet_topups SET reversed_amount_minor = $2,
+         status = CASE WHEN $2::bigint = amount_minor THEN 'reversed' ELSE status END,
+         updated_at = now() WHERE id = $1`,
+        [row.id, total.toString()],
+      );
+      await this.audit(client, row.id, "paypal", captureId, "topup.reversed", "topup", row.id, {
+        amountMinor: amountMinor.toString(), eventId, eventType,
+      });
     });
   }
 
@@ -1454,7 +1962,7 @@ export class PaylService {
         `SELECT a.currency, a.account_type, COALESCE(sum(l.amount_minor), 0)::text AS balance
          FROM ledger_accounts a LEFT JOIN journal_lines l ON l.account_id = a.id
          WHERE a.owner_type = 'merchant' AND a.owner_id = $1
-           AND a.account_type IN ('pending_payable', 'payable', 'reserve')
+           AND a.account_type IN ('pending_payable', 'payable', 'reserve', 'payout_pending')
          GROUP BY a.id, a.currency, a.account_type ORDER BY a.account_type`,
         [merchantId],
       ),
@@ -1764,7 +2272,7 @@ export class PaylService {
   }
 
   async consumerDashboard(consumerId: string): Promise<Record<string, unknown>> {
-    const [wallet, policy, orders] = await Promise.all([
+    const [wallet, policy, orders, topups] = await Promise.all([
       this.walletSummary(consumerId),
       this.walletPolicy(consumerId),
       this.pool.query<{
@@ -1801,11 +2309,14 @@ export class PaylService {
          ORDER BY o.created_at DESC LIMIT 50`,
         [consumerId],
       ),
+      this.listTopups(consumerId),
     ]);
     return {
       sandbox: true,
+      paypal: { enabled: !!this.paypal, clientId: this.paypalClientId() },
       wallet,
       policy,
+      topups,
       orders: orders.rows.map((row) => ({
         ...row,
         created_at: row.created_at.toISOString(),
@@ -1819,7 +2330,8 @@ export class PaylService {
   }
 
   async merchantDashboard(merchantId: string): Promise<Record<string, unknown>> {
-    const [merchant, offers, orders, journal, metrics, reconciliation, payouts, webhook, outbox] = await Promise.all([
+    await this.reconcilePendingPayouts(merchantId);
+    const [merchant, offers, orders, journal, metrics, reconciliation, payouts, webhook, outbox, payoutConfig] = await Promise.all([
       this.pool.query<{
         id: string;
         name: string;
@@ -1828,6 +2340,7 @@ export class PaylService {
         payable_minor: string;
         pending_payable_minor: string;
         reserve_minor: string;
+        payout_pending_minor: string;
         gross_sales_minor: string;
         platform_fees_minor: string;
         net_sales_minor: string;
@@ -1858,6 +2371,12 @@ export class PaylService {
                   WHERE a.owner_type = 'merchant' AND a.owner_id = m.id
                     AND a.account_type = 'reserve' AND a.currency = m.currency
                 ), '0') AS reserve_minor,
+                COALESCE((
+                  SELECT sum(l.amount_minor)::text
+                  FROM ledger_accounts a LEFT JOIN journal_lines l ON l.account_id = a.id
+                  WHERE a.owner_type = 'merchant' AND a.owner_id = m.id
+                    AND a.account_type = 'payout_pending' AND a.currency = m.currency
+                ), '0') AS payout_pending_minor,
                 COALESCE(sum(o.captured_amount_minor) FILTER (WHERE o.status <> 'cancelled'), 0)::text AS gross_sales_minor,
                 COALESCE(sum(o.platform_fee_minor) FILTER (WHERE o.status <> 'cancelled'), 0)::text AS platform_fees_minor,
                 (COALESCE(sum(o.captured_amount_minor - o.platform_fee_minor) FILTER (WHERE o.status <> 'cancelled'), 0) -
@@ -1918,9 +2437,7 @@ export class PaylService {
       ),
       this.pilotMetrics(merchantId),
       this.reconciliationReport(merchantId),
-      this.pool.query<{
-        id: string; currency: string; source_payable_minor: string; reserve_held_minor: string; paid_amount_minor: string; status: string; created_at: Date;
-      }>("SELECT * FROM payout_batches WHERE merchant_id = $1 ORDER BY created_at DESC LIMIT 25", [merchantId]),
+      this.pool.query<PayoutRow>("SELECT * FROM payout_batches WHERE merchant_id = $1 ORDER BY created_at DESC LIMIT 25", [merchantId]),
       this.pool.query<{ id: string; url: string; active: boolean; updated_at: Date }>(
         "SELECT id, url, active, updated_at FROM merchant_webhook_endpoints WHERE merchant_id = $1",
         [merchantId],
@@ -1929,9 +2446,14 @@ export class PaylService {
         "SELECT status, count(*)::text AS count FROM outbox_events WHERE merchant_id = $1 GROUP BY status",
         [merchantId],
       ),
+      this.pool.query<{ paypal_payout_email: string | null }>(
+        "SELECT paypal_payout_email FROM merchant_settlement_configs WHERE merchant_id = $1",
+        [merchantId],
+      ),
     ]);
     return {
       sandbox: true,
+      paypal: { enabled: !!this.paypal, payoutEmail: payoutConfig.rows[0]?.paypal_payout_email ?? null },
       merchant: merchant.rows[0]
         ? {
             merchantId: merchant.rows[0].id,
@@ -1944,6 +2466,7 @@ export class PaylService {
               pendingFulfillment: merchant.rows[0].pending_payable_minor,
               payable: merchant.rows[0].payable_minor,
               reserve: merchant.rows[0].reserve_minor,
+              payoutPending: merchant.rows[0].payout_pending_minor,
             },
             totals: {
               grossSalesMinor: merchant.rows[0].gross_sales_minor,
@@ -2302,15 +2825,7 @@ export class PaylService {
     )).rows[0]?.balance ?? "0");
   }
 
-  private payoutResult(row: {
-    id: string;
-    currency: string;
-    source_payable_minor: string;
-    reserve_held_minor: string;
-    paid_amount_minor: string;
-    status: string;
-    created_at: Date;
-  }): Record<string, unknown> {
+  private payoutResult(row: PayoutRow): Record<string, unknown> {
     return {
       payoutId: row.id,
       status: row.status,
@@ -2318,7 +2833,12 @@ export class PaylService {
       sourcePayableMinor: row.source_payable_minor,
       reserveHeldMinor: row.reserve_held_minor,
       paidAmountMinor: row.paid_amount_minor,
+      recipientEmail: row.paypal_recipient_email,
+      paypalBatchId: row.paypal_batch_id,
+      paypalItemId: row.paypal_item_id,
+      providerFeeMinor: row.provider_fee_minor,
       createdAt: row.created_at.toISOString(),
+      completedAt: row.completed_at?.toISOString() ?? null,
     };
   }
 
@@ -2328,7 +2848,7 @@ export class PaylService {
         `SELECT o.id, o.merchant_id, m.name AS merchant_name, m.server_id, o.name, o.description,
                 o.price_minor::text, o.currency, o.fulfillment_method, o.refundable, o.refund_window_minutes
          FROM offers o JOIN merchants m ON m.id = o.merchant_id
-         WHERE o.id = $1 AND o.merchant_id = $2 AND o.active = true`,
+         WHERE o.id = $1 AND o.merchant_id = $2 AND o.active = true AND m.status = 'active'`,
         [offerId, merchantId],
       )).rows[0],
       "OFFER_NOT_FOUND",

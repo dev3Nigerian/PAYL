@@ -1,6 +1,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import { createHash } from "node:crypto";
 import cors from "cors";
-import { rateLimit } from "express-rate-limit";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { pinoHttp } from "pino-http";
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
@@ -10,6 +11,7 @@ import { bearerToken, cookieValue, type AuthSession, type IdentityService, type 
 import { handleCommerceMcp, handleConsumerMcp, handleMerchantMcp, handleWalletMcp } from "./mcp.js";
 import { MCP_SCOPES, type PaylOAuthProvider, requireToolScope, toolScopeForRequest } from "./oauth.js";
 import { DIGITAL_GOODS_TERMS_V1, type PaylService } from "./service.js";
+import { PaymentMandateSchema, SignedQuoteSchema, type SignedQuote } from "@payl/contracts";
 
 export function createApp(
   service: PaylService,
@@ -33,6 +35,15 @@ export function createApp(
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["content-type", "authorization"],
   }));
+  app.post("/api/paypal/webhook", express.raw({ type: "application/json", limit: "256kb" }), async (request, response, next) => {
+    try {
+      if (!Buffer.isBuffer(request.body)) throw new DomainError("PAYPAL_WEBHOOK_INVALID", "PayPal webhook body is required");
+      await service.handlePayPalWebhook(request.body, request.headers);
+      response.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  });
   app.use(express.json({ limit: "256kb", strict: true }));
   app.use(express.urlencoded({ extended: false }));
   app.use(rateLimit({ windowMs: 60_000, limit: 240, standardHeaders: "draft-8", legacyHeaders: false }));
@@ -238,6 +249,192 @@ export function createApp(
       next(error);
     }
   });
+  app.post("/api/consumer/topups", async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "consumer");
+      response.status(201).json(await service.createTopup({
+        consumerId: requireConsumerId(session),
+        amountMinor: request.body?.amountMinor,
+        idempotencyKey: request.body?.idempotencyKey,
+      }));
+    } catch (error) { next(error); }
+  });
+  app.get("/api/consumer/topups/:topupId", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "consumer");
+      response.json(await service.topupStatus(requireConsumerId(session), request.params.topupId ?? ""));
+    } catch (error) { next(error); }
+  });
+  app.post("/api/consumer/topups/:topupId/capture", async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "consumer");
+      response.json(await service.captureTopup(requireConsumerId(session), request.params.topupId ?? ""));
+    } catch (error) { next(error); }
+  });
+  app.post("/api/consumer/topups/:topupId/cancel", async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "consumer");
+      response.json(await service.cancelTopup(requireConsumerId(session), request.params.topupId ?? ""));
+    } catch (error) { next(error); }
+  });
+  app.get("/api/consumer/chat", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "consumer");
+      response.set("cache-control", "no-store").json(
+        await service.chat.getConversation(requireConsumerId(session), request.query.conversationId),
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
+  const chatLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 20,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    keyGenerator: (request) => {
+      const token = bearerToken(request.header("authorization"));
+      return token ? createHash("sha256").update(token).digest("hex") : ipKeyGenerator(request.ip ?? "unknown");
+    },
+    handler: (_request, response) => {
+      response.status(429).json({ error: {
+        code: "CHAT_RATE_LIMITED",
+        message: "Too many chat messages. Please try again in a minute.",
+        retryable: true,
+      } });
+    },
+  });
+  app.post("/api/consumer/chat", chatLimiter, async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "consumer");
+      response.set("cache-control", "no-store").json(await service.chat.reply(requireConsumerId(session), {
+        conversationId: request.body?.conversationId,
+        message: request.body?.message,
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/consumer/checkout/quote", async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      await requireWebSession(request, identity, "consumer");
+      const merchantId = checkoutIdentifier(request.body?.merchantId, "merchantId");
+      const offerId = checkoutIdentifier(request.body?.offerId, "offerId");
+      const quantity = request.body?.quantity ?? 1;
+      const offer = await service.getOffer(merchantId, offerId);
+      const signedQuote = await service.createQuote(merchantId, offerId, quantity);
+      response.set("cache-control", "no-store").json({ signedQuote, offer: {
+        ...offer,
+        description: signedQuote.payload.items[0]?.description ?? offer.description,
+        priceMinor: signedQuote.payload.items[0]?.unitPriceMinor ?? offer.priceMinor,
+        fulfillmentMethod: signedQuote.payload.fulfillmentMethod,
+        ...(signedQuote.payload.schemaVersion === "2026-07-19" ? {
+          refundable: signedQuote.payload.refundPolicy.refundable,
+          refundWindowMinutes: signedQuote.payload.refundPolicy.refundWindowMinutes,
+        } : {}),
+      } });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/consumer/checkout/confirm", async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "consumer");
+      const signedQuote = checkoutQuote(request.body?.signedQuote);
+      const idempotencyKey = checkoutIdempotencyKey(request.body?.idempotencyKey);
+      const consumerId = requireConsumerId(session);
+      const completed = await service.completedCheckout(consumerId, idempotencyKey, signedQuote);
+      if (completed) {
+        response.set("cache-control", "no-store").json({ status: "confirmed", order: completed });
+        return;
+      }
+      let prepared;
+      try {
+        prepared = await service.preparePayment({
+          consumerId,
+          agentClientId: "payl_in_app",
+          signedQuote,
+          idempotencyKey,
+        });
+      } catch (error) {
+        if (error instanceof DomainError && error.code === "PAYMENT_NOT_PREPARABLE") {
+          const order = await service.completedCheckout(consumerId, idempotencyKey, signedQuote);
+          if (order) {
+            response.set("cache-control", "no-store").json({ status: "confirmed", order });
+            return;
+          }
+        }
+        throw error;
+      }
+      if (prepared.status === "pending_approval") {
+        response.set("cache-control", "no-store").json({
+          status: "pending_approval", paymentId: prepared.paymentId, approvalUrl: prepared.approvalUrl,
+        });
+        return;
+      }
+      const order = await service.commitOrder({
+        merchantId: signedQuote.payload.merchantId,
+        signedQuote,
+        mandate: prepared.mandate,
+        idempotencyKey: checkoutCommitKey(idempotencyKey),
+      });
+      response.set("cache-control", "no-store").json({ status: "confirmed", order });
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.post("/api/consumer/checkout/complete", async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "consumer");
+      const consumerId = requireConsumerId(session);
+      const paymentId = checkoutIdentifier(request.body?.paymentId, "paymentId");
+      const signedQuote = checkoutQuote(request.body?.signedQuote);
+      const idempotencyKey = checkoutIdempotencyKey(request.body?.idempotencyKey);
+      const completed = await service.completedCheckout(consumerId, idempotencyKey, signedQuote);
+      if (completed) {
+        if (completed.paymentId !== paymentId) {
+          throw new DomainError("PAYMENT_QUOTE_MISMATCH", "Payment does not belong to this quote", 409);
+        }
+        response.set("cache-control", "no-store").json({ status: "confirmed", order: completed });
+        return;
+      }
+      const payment = await service.paymentStatus(paymentId, consumerId);
+      if (payment.quoteId !== signedQuote.payload.quoteId) {
+        throw new DomainError("PAYMENT_QUOTE_MISMATCH", "Payment does not belong to this quote", 409);
+      }
+      if (payment.status === "pending_approval") {
+        response.set("cache-control", "no-store").json({ status: "pending_approval", paymentId });
+        return;
+      }
+      if (payment.status !== "reserved" && payment.status !== "captured") {
+        throw new DomainError("PAYMENT_NOT_READY", `Payment is ${payment.status}`, 409);
+      }
+      const mandate = payment.mandate;
+      if (!mandate || typeof mandate !== "object" || !("payload" in mandate)) {
+        throw new DomainError("MANDATE_NOT_FOUND", "Payment mandate was not found", 404);
+      }
+      const parsedMandate = checkoutMandate(mandate);
+      if (parsedMandate.payload.consumerRef !== consumerId || parsedMandate.payload.quoteHash !== signedQuote.hash) {
+        throw new DomainError("PAYMENT_QUOTE_MISMATCH", "Payment does not belong to this quote", 409);
+      }
+      const order = await service.commitOrder({
+        merchantId: signedQuote.payload.merchantId,
+        signedQuote,
+        mandate: parsedMandate,
+        idempotencyKey: checkoutCommitKey(idempotencyKey),
+      });
+      response.set("cache-control", "no-store").json({ status: "confirmed", order });
+    } catch (error) {
+      next(error);
+    }
+  });
   app.get("/api/merchant/dashboard", async (request, response, next) => {
     try {
       const session = await requireWebSession(request, identity, "merchant_admin");
@@ -405,13 +602,25 @@ export function createApp(
   app.post("/api/merchant/payouts", async (request, response, next) => {
     try {
       const session = await requireWebSession(request, identity, "merchant_admin");
-      response.status(201).json(await service.createPayout({
+      response.status(202).json(await service.createPayout({
         merchantId: requireMerchantId(session),
         idempotencyKey: request.body?.idempotencyKey,
       }));
     } catch (error) {
       next(error);
     }
+  });
+  app.get("/api/merchant/payouts/:payoutId", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json(await service.payoutStatus(requireMerchantId(session), request.params.payoutId ?? ""));
+    } catch (error) { next(error); }
+  });
+  app.put("/api/merchant/payout-account", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json(await service.setPayoutEmail(requireMerchantId(session), request.body?.email));
+    } catch (error) { next(error); }
   });
   app.get("/api/merchant/reconciliation", async (request, response, next) => {
     try {
@@ -523,6 +732,45 @@ function html(value: string): string {
     '"': "&quot;",
     "'": "&#039;",
   })[character] ?? character);
+}
+
+function checkoutIdentifier(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{3,128}$/.test(value)) {
+    throw new DomainError("INVALID_CHECKOUT_INPUT", `${label} is invalid`);
+  }
+  return value;
+}
+
+function assertConsumerWriteOrigin(request: Request, config: Config): void {
+  if (bearerToken(request.header("authorization"))) return;
+  const origin = request.header("origin");
+  const allowed = [config.approvalWebUrl, config.publicBaseUrl].map((url) => new URL(url).origin);
+  if (!origin || !allowed.includes(origin)) {
+    throw new DomainError("INVALID_ORIGIN", "This request must come from the consumer app", 403);
+  }
+}
+
+function checkoutIdempotencyKey(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length < 8 || value.trim().length > 128) {
+    throw new DomainError("INVALID_IDEMPOTENCY_KEY", "Checkout idempotency key must contain 8 to 128 characters");
+  }
+  return value.trim();
+}
+
+function checkoutCommitKey(value: string): string {
+  return `checkout:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function checkoutQuote(value: unknown): SignedQuote {
+  const result = SignedQuoteSchema.safeParse(value);
+  if (!result.success) throw new DomainError("INVALID_SIGNED_QUOTE", "Signed quote is invalid");
+  return result.data;
+}
+
+function checkoutMandate(value: unknown) {
+  const result = PaymentMandateSchema.safeParse(value);
+  if (!result.success) throw new DomainError("INVALID_MANDATE", "Payment mandate is invalid");
+  return result.data;
 }
 
 function hostedAuthorizeReturnTo(value: unknown, config: Config): string {

@@ -6,6 +6,7 @@ import { createPool } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { PaylService } from "../src/service.js";
 import { IdentityService } from "../src/identity.js";
+import { FakePayPalGateway } from "./fake-paypal.js";
 
 const config = loadConfig({
   ...process.env,
@@ -17,9 +18,14 @@ const config = loadConfig({
   PAYL_DEV_KEYS: "true",
   SANDBOX_CONSUMER_ID: "consumer_demo",
   SANDBOX_MERCHANT_ID: "merchant_demo",
+  PAYPAL_SANDBOX_CLIENT_ID: "sandbox-client-id",
+  PAYPAL_SANDBOX_CLIENT_SECRET: "sandbox-client-secret",
+  PAYPAL_SANDBOX_MERCHANT_ID: "sandbox-business-id",
+  PAYPAL_SANDBOX_WEBHOOK_ID: "sandbox-webhook-id",
 });
 const pool = createPool(config);
-const service = new PaylService(pool, config);
+const paypal = new FakePayPalGateway();
+const service = new PaylService(pool, config, paypal);
 const identity = new IdentityService(pool, config);
 
 beforeAll(async () => {
@@ -31,8 +37,9 @@ beforeEach(async () => {
     `TRUNCATE TABLE
        oauth_revoked_access_tokens, oauth_refresh_tokens, oauth_grants, oauth_authorization_codes,
        oauth_consent_requests, oauth_clients, auth_sessions, auth_users,
-       auth_browser_handoffs,
+       auth_browser_handoffs, consumer_chat_messages, consumer_chat_conversations,
        reconciliation_reports, outbox_events, merchant_webhook_endpoints, payout_batches,
+       paypal_webhook_events, wallet_topups,
        merchant_settlement_configs, order_cancellations, payment_cancellations,
        audit_events, refunds, orders, payment_mandates, approval_challenges, payment_intents, quotes,
        journal_lines, journal_entries, ledger_accounts, spending_policies, offers, consumers, merchants
@@ -547,10 +554,14 @@ describe("PAYL signed quote to receipt flow", () => {
     if (prepared.status !== "reserved") throw new Error("Expected reserved payment");
     const order = await service.commitOrder({ merchantId: "merchant_demo", signedQuote: quote, mandate: prepared.mandate, idempotencyKey: "commit-payout-001" });
 
+    await service.setPayoutEmail("merchant_demo", "merchant-paypal@example.com");
+    paypal.payoutStatus = "PENDING";
     const payout = await service.createPayout({ merchantId: "merchant_demo", idempotencyKey: "payout-batch-001" });
-    expect(payout).toMatchObject({ sourcePayableMinor: "7350", reserveHeldMinor: "735", paidAmountMinor: "6615", status: "paid" });
+    expect(payout).toMatchObject({ sourcePayableMinor: "7350", reserveHeldMinor: "735", paidAmountMinor: "6615", status: "pending" });
     const payoutRetry = await service.createPayout({ merchantId: "merchant_demo", idempotencyKey: "payout-batch-001" });
     expect(payoutRetry.payoutId).toBe(payout.payoutId);
+    paypal.payoutStatus = "SUCCESS";
+    expect(await service.payoutStatus("merchant_demo", payout.payoutId as string)).toMatchObject({ status: "paid" });
     expect(await service.reconciliationReport("merchant_demo")).toMatchObject({ differenceMinor: "0", reconciled: true });
 
     await service.refundOrder({ consumerId: "consumer_demo", orderId: order.orderId, idempotencyKey: "refund-after-payout-001" });
