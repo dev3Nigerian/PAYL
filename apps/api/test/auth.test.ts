@@ -19,7 +19,7 @@ const config = loadConfig({
   PUBLIC_BASE_URL: "http://localhost:4100",
   PAYL_ISSUER: "https://sandbox.payl.local",
   PAYL_DEV_KEYS: "true",
-  OPENAI_API_KEY: "test-api-key",
+  DEEPSEEK_API_KEY: "test-api-key",
 });
 const pool = createPool(config);
 const service = new PaylService(pool, config);
@@ -374,8 +374,12 @@ describe("PAYL identity and MCP authorization", () => {
       expect(sent.body.message).toMatchObject({ role: "assistant", content: "The Market Research Pack is $75." });
       expect(sent.body.offers).toHaveLength(1);
       expect(sent.body.offers[0]).toMatchObject({ offerId: "offer_research_pack", priceMinor: "7500" });
-      const modelRequest = JSON.parse(String(modelCall.mock.calls[0]?.[1]?.body));
-      expect(modelRequest).toMatchObject({ model: "gpt-6-luna", store: false });
+      const modelCallArgs = modelCall.mock.calls[0];
+      expect(String(modelCallArgs?.[0])).toBe("https://api.deepseek.com/responses");
+      expect(new Headers(modelCallArgs?.[1]?.headers).get("authorization")).toBe("Bearer test-api-key");
+      const modelRequest = JSON.parse(String(modelCallArgs?.[1]?.body));
+      expect(modelRequest).toMatchObject({ model: "deepseek-flash", reasoning: { effort: "none" }, max_output_tokens: 600 });
+      expect(modelRequest).not.toHaveProperty("store");
       expect(modelRequest.input).toContain("offer_research_pack");
       expect(modelRequest.input).not.toContain("signedQuote");
 

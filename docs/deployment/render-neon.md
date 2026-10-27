@@ -103,7 +103,7 @@ Then verify this sequence:
 
 ### Enable in-app shopping chat
 
-In the Render environment settings for `payl-api-dev3nigerian`, set `OPENAI_API_KEY` as a secret. Optionally set `OPENAI_MODEL` (the default is `gpt-6-luna`), then redeploy the API service. Keep these variables off the consumer web service and out of `NEXT_PUBLIC_` variables. Sign in to the consumer dashboard and open **Shop with AI** to compare live merchant offers and review a quote before checkout. The hosted sandbox's wallet policy and separate MFA approval still govern payment.
+In the Render environment settings for `payl-api-dev3nigerian`, set `DEEPSEEK_API_KEY` as a secret. Optionally set `DEEPSEEK_MODEL` (the default is `deepseek-flash`), then redeploy the API service. Existing `OPENAI_API_KEY` and `OPENAI_MODEL` values are no longer used and can be removed after the DeepSeek deployment succeeds. Keep the key off the consumer web service and out of `NEXT_PUBLIC_` variables. Sign in to the consumer dashboard and open **Shop with AI** to compare live merchant offers and review a quote before checkout. The hosted sandbox's wallet policy and separate MFA approval still govern payment.
 
 ### Enable PayPal Sandbox funding and withdrawals
 

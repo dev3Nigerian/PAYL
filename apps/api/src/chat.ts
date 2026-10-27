@@ -46,7 +46,7 @@ type OfferRow = {
   refund_window_minutes: number | null;
 };
 
-type OpenAiResponse = {
+type DeepSeekResponse = {
   output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
 };
 
@@ -84,7 +84,7 @@ function mapMessage(row: MessageRow): ChatMessage {
   };
 }
 
-function modelText(value: OpenAiResponse): string {
+function modelText(value: DeepSeekResponse): string {
   return (value.output ?? [])
     .filter((item) => item.type === "message")
     .flatMap((item) => item.content ?? [])
@@ -120,7 +120,7 @@ export class ConsumerChatService {
     message: ChatMessage;
     offers: ChatOffer[];
   }> {
-    if (!this.config.openaiApiKey) {
+    if (!this.config.deepseekApiKey) {
       throw new DomainError("CHAT_NOT_CONFIGURED", "In-app AI chat is not configured yet", 503, true);
     }
     const userMessage = validatedMessage(input.message);
@@ -284,8 +284,7 @@ export class ConsumerChatService {
 
   private async generateAnswer(userMessage: string, previous: ChatMessage[], offers: ChatOffer[]): Promise<string> {
     const payload = {
-      model: this.config.openaiModel,
-      store: false,
+      model: this.config.deepseekModel,
       reasoning: { effort: "none" },
       max_output_tokens: 600,
       instructions: CHAT_INSTRUCTIONS,
@@ -300,10 +299,10 @@ export class ConsumerChatService {
     };
     let response: Response;
     try {
-      response = await fetch("https://api.openai.com/v1/responses", {
+      response = await fetch("https://api.deepseek.com/responses", {
         method: "POST",
         headers: {
-          authorization: `Bearer ${this.config.openaiApiKey}`,
+          authorization: `Bearer ${this.config.deepseekApiKey}`,
           "content-type": "application/json",
         },
         body: JSON.stringify(payload),
@@ -313,9 +312,9 @@ export class ConsumerChatService {
       throw new DomainError("CHAT_UNAVAILABLE", "AI chat is temporarily unavailable", 503, true);
     }
     if (!response.ok) throw new DomainError("CHAT_UNAVAILABLE", "AI chat is temporarily unavailable", 503, true);
-    let data: OpenAiResponse;
+    let data: DeepSeekResponse;
     try {
-      data = await response.json() as OpenAiResponse;
+      data = await response.json() as DeepSeekResponse;
     } catch {
       throw new DomainError("CHAT_UNAVAILABLE", "AI chat is temporarily unavailable", 503, true);
     }

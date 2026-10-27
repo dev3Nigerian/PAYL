@@ -50,6 +50,10 @@ services:
         value: "60"
       - key: LIFECYCLE_WORKER_INTERVAL_MS
         value: "2000"
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_MODEL
+        value: deepseek-flash
       - key: PAYPAL_SANDBOX_CLIENT_ID
         sync: false
       - key: PAYPAL_SANDBOX_CLIENT_SECRET

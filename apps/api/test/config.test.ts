@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { createSecretDerivedKey, signPayload, verifyPayload } from "@payl/crypto";
 import { loadConfig } from "../src/config.js";
 
+describe("DeepSeek chat configuration", () => {
+  it("uses a DeepSeek key and defaults to the flash model", () => {
+    expect(loadConfig({}).deepseekApiKey).toBeNull();
+    expect(loadConfig({ OPENAI_API_KEY: "legacy-key" }).deepseekApiKey).toBeNull();
+    const configured = loadConfig({ DEEPSEEK_API_KEY: " deepseek-test-key " });
+    expect(configured.deepseekApiKey).toBe("deepseek-test-key");
+    expect(configured.deepseekModel).toBe("deepseek-flash");
+    expect(loadConfig({ DEEPSEEK_MODEL: "deepseek-v4-pro" }).deepseekModel).toBe("deepseek-v4-pro");
+  });
+});
+
 describe("PayPal Sandbox configuration", () => {
   it("requires the server credentials and webhook ID together", () => {
     expect(() => loadConfig({ PAYPAL_SANDBOX_CLIENT_ID: "sandbox-client" })).toThrow("requires client ID");
