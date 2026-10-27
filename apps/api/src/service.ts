@@ -185,7 +185,7 @@ export class PaylService {
     private readonly config: Config,
     paypalGateway?: PayPalGateway | null,
   ) {
-    this.chat = new ConsumerChatService(pool, config);
+    this.chat = new ConsumerChatService(pool, config, this);
     this.paylKey = this.signingKey("payl-mandate-issuer", "payl-sandbox-2026-01", "mandate");
     this.paypal = paypalGateway === undefined
       ? (config.paypal ? new HttpPayPalGateway(config.paypal) : null)

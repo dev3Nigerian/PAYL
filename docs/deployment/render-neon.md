@@ -103,7 +103,7 @@ Then verify this sequence:
 
 ### Enable in-app shopping chat
 
-In the Render environment settings for `payl-api-dev3nigerian`, set `DEEPSEEK_API_KEY` as a secret. Optionally set `DEEPSEEK_MODEL` (the default is `deepseek-flash`), then redeploy the API service. Existing `OPENAI_API_KEY` and `OPENAI_MODEL` values are no longer used and can be removed after the DeepSeek deployment succeeds. Keep the key off the consumer web service and out of `NEXT_PUBLIC_` variables. Sign in to the consumer dashboard and open **Shop with AI** to compare live merchant offers and review a quote before checkout. The hosted sandbox's wallet policy and separate MFA approval still govern payment.
+In the Render environment settings for `payl-api-dev3nigerian`, set `DEEPSEEK_API_KEY` as a secret. Optionally set `DEEPSEEK_MODEL` (the default is `deepseek-flash`), then redeploy the API service. Existing `OPENAI_API_KEY` and `OPENAI_MODEL` values are no longer used and can be removed after the DeepSeek deployment succeeds. Keep the key off the consumer web service and out of `NEXT_PUBLIC_` variables. Sign in to the consumer dashboard and open **Shop with AI**. Ask for live offers, then say “Buy the second one” to exercise the signed quote, wallet policy, and order flow in chat. A purchase above the auto-approval limit still requires separate MFA approval. This feature adds no new environment variables; redeploy both API and consumer web services. The API applies migration `0010_chat_purchases.sql` at startup.
 
 ### Enable PayPal Sandbox funding and withdrawals
 

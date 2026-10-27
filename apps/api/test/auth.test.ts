@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import { loadConfig } from "../src/config.js";
@@ -401,6 +401,178 @@ describe("PAYL identity and MCP authorization", () => {
         .rejects.toMatchObject({ code: "CONVERSATION_NOT_FOUND" });
       await request(app).get("/api/consumer/chat")
         .query({ conversationId: sent.body.conversationId }).expect(401);
+    } finally {
+      modelCall.mockRestore();
+    }
+  });
+
+  it("buys a previously shown offer through chat once under the wallet policy", async () => {
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = $1", [config.sandboxConsumerId]);
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail, password: config.sandboxConsumerPassword, role: "consumer",
+    }).expect(200);
+    const token = login.body.sessionToken as string;
+    const modelCall = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const payload = JSON.parse(String(init?.body)) as { input: string };
+      const question = (JSON.parse(payload.input) as { question: string }).question;
+      const output = question.startsWith("Buy")
+        ? [{ type: "function_call", name: "prepare_purchase", arguments: JSON.stringify({ offerId: "offer_research_pack" }) }]
+        : [{ type: "message", content: [{ type: "output_text", text: "The Market Research Pack is available for $75." }] }];
+      return new Response(JSON.stringify({ output }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    try {
+      const found = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send({ message: "Show research offers", requestId: randomUUID() }).expect(200);
+      expect(found.body.offers).toHaveLength(1);
+      const buyInput = { conversationId: found.body.conversationId, message: "Buy it", requestId: randomUUID() };
+      const bought = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send(buyInput).expect(200);
+      expect(bought.body.message.action).toMatchObject({ status: "confirmed", offer: { offerId: "offer_research_pack" } });
+      expect(bought.body.message.content).toContain("Order confirmed");
+      const orderId = bought.body.message.action.orderId as string;
+      expect(orderId).toMatch(/^order_/);
+      const repeated = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send(buyInput).expect(200);
+      expect(repeated.body.message.action.orderId).toBe(orderId);
+      expect((await pool.query("SELECT id FROM orders")).rowCount).toBe(1);
+      expect((await pool.query("SELECT id FROM payment_intents")).rowCount).toBe(1);
+      expect((await service.walletSummary(config.sandboxConsumerId)).balances).toMatchObject({ available: "92500" });
+      expect(modelCall).toHaveBeenCalledTimes(2);
+    } finally {
+      modelCall.mockRestore();
+    }
+  });
+
+  it("continues an agent purchase after separate human approval", async () => {
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail, password: config.sandboxConsumerPassword, role: "consumer",
+    }).expect(200);
+    const token = login.body.sessionToken as string;
+    const modelCall = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
+      output: [{ type: "function_call", name: "prepare_purchase", arguments: JSON.stringify({ offerId: "offer_research_pack" }) }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      const started = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send({ message: "Buy Market Research Pack under $80", requestId: randomUUID() }).expect(200);
+      const action = started.body.message.action;
+      expect(action).toMatchObject({ status: "pending_approval", offer: { offerId: "offer_research_pack" } });
+      expect((await pool.query("SELECT id FROM orders")).rowCount).toBe(0);
+      const approvalId = new URL(action.approvalUrl as string).pathname.split("/").at(-1);
+      await request(app).post(`/api/approvals/${approvalId}/decision`).set("authorization", `Bearer ${token}`)
+        .send({ decision: "approve", mfaCode: totpCode(config.sandboxConsumerTotpSecret) }).expect(200);
+      const resumeInput = { conversationId: started.body.conversationId, purchaseId: action.purchaseId,
+        message: "I approved", requestId: randomUUID() };
+      const completed = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send(resumeInput).expect(200);
+      expect(completed.body.message.content).toContain("Order confirmed");
+      const repeated = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send(resumeInput).expect(200);
+      expect(repeated.body.message.id).toBe(completed.body.message.id);
+      const history = await request(app).get("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .query({ conversationId: started.body.conversationId }).expect(200);
+      expect(history.body.messages[1].action.status).toBe("confirmed");
+      expect((await pool.query("SELECT id FROM orders")).rowCount).toBe(1);
+      expect(modelCall).toHaveBeenCalledTimes(1);
+    } finally {
+      modelCall.mockRestore();
+    }
+  });
+
+  it("asks for confirmation when a shown offer changes price before purchase", async () => {
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = $1", [config.sandboxConsumerId]);
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail, password: config.sandboxConsumerPassword, role: "consumer",
+    }).expect(200);
+    const token = login.body.sessionToken as string;
+    const modelCall = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const question = (JSON.parse((JSON.parse(String(init?.body)) as { input: string }).input) as { question: string }).question;
+      const output = question.startsWith("Buy")
+        ? [{ type: "function_call", name: "prepare_purchase", arguments: JSON.stringify({ offerId: "offer_research_pack" }) }]
+        : [{ type: "message", content: [{ type: "output_text", text: "The research pack is $75." }] }];
+      return new Response(JSON.stringify({ output }), { status: 200 });
+    });
+    try {
+      const found = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send({ message: "Show research offers", requestId: randomUUID() }).expect(200);
+      await pool.query("UPDATE offers SET price_minor = 8000 WHERE id = 'offer_research_pack'");
+      const proposed = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send({ conversationId: found.body.conversationId, message: "Buy it", requestId: randomUUID() }).expect(200);
+      expect(proposed.body.message.action).toMatchObject({ status: "ready", signedQuote: { payload: { totalMinor: "8000" } } });
+      expect((await pool.query("SELECT id FROM orders")).rowCount).toBe(0);
+      const confirmed = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send({ conversationId: found.body.conversationId, purchaseId: proposed.body.message.action.purchaseId,
+          message: "Confirm purchase", requestId: randomUUID() }).expect(200);
+      expect(confirmed.body.message.content).toContain("Order confirmed");
+      expect((await pool.query("SELECT id FROM orders")).rowCount).toBe(1);
+    } finally {
+      modelCall.mockRestore();
+    }
+  });
+
+  it("directs an insufficiently funded chat purchase to top up without creating an order", async () => {
+    await pool.query("UPDATE offers SET price_minor = 150000 WHERE id = 'offer_research_pack'");
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 200000, per_transaction_limit_minor = 200000, daily_limit_minor = 200000 WHERE consumer_id = $1", [config.sandboxConsumerId]);
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail, password: config.sandboxConsumerPassword, role: "consumer",
+    }).expect(200);
+    const token = login.body.sessionToken as string;
+    const modelCall = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
+      output: [{ type: "function_call", name: "prepare_purchase", arguments: JSON.stringify({ offerId: "offer_research_pack" }) }],
+    }), { status: 200 }));
+    try {
+      const sent = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send({ message: "Buy Market Research Pack under $2000", requestId: randomUUID() }).expect(200);
+      expect(sent.body.message.action.status).toBe("needs_funding");
+      expect(sent.body.message.content).toContain("Add funds");
+      expect((await pool.query("SELECT id FROM orders")).rowCount).toBe(0);
+      expect((await pool.query("SELECT id FROM payment_intents")).rowCount).toBe(0);
+    } finally {
+      modelCall.mockRestore();
+    }
+  });
+
+  it("ignores a model purchase call when the consumer only asks a question", async () => {
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail, password: config.sandboxConsumerPassword, role: "consumer",
+    }).expect(200);
+    const token = login.body.sessionToken as string;
+    const modelCall = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
+      output: [{ type: "function_call", name: "prepare_purchase", arguments: JSON.stringify({ offerId: "offer_research_pack" }) }],
+    }), { status: 200 }));
+    try {
+      const sent = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send({ message: "Can I buy the research pack?", requestId: randomUUID() }).expect(200);
+      expect(sent.body.message.action).toBeNull();
+      expect((await pool.query("SELECT id FROM quotes")).rowCount).toBe(0);
+      expect((await pool.query("SELECT id FROM payment_intents")).rowCount).toBe(0);
+    } finally {
+      modelCall.mockRestore();
+    }
+  });
+
+  it("uses the consumer's ordinal selection when the model names a different offer", async () => {
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 20000 WHERE consumer_id = $1", [config.sandboxConsumerId]);
+    const login = await request(app).post("/api/auth/login").send({
+      email: config.sandboxConsumerEmail, password: config.sandboxConsumerPassword, role: "consumer",
+    }).expect(200);
+    const token = login.body.sessionToken as string;
+    const modelCall = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const question = (JSON.parse((JSON.parse(String(init?.body)) as { input: string }).input) as { question: string }).question;
+      const output = question.startsWith("Buy")
+        ? [{ type: "function_call", name: "prepare_purchase", arguments: JSON.stringify({ offerId: "offer_research_pack" }) }]
+        : [{ type: "message", content: [{ type: "output_text", text: "Two offers are available." }] }];
+      return new Response(JSON.stringify({ output }), { status: 200 });
+    });
+    try {
+      const found = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send({ message: "Show available offers", requestId: randomUUID() }).expect(200);
+      expect(found.body.offers).toHaveLength(2);
+      expect(found.body.offers[1].offerId).toBe("offer_brand_review");
+      const bought = await request(app).post("/api/consumer/chat").set("authorization", `Bearer ${token}`)
+        .send({ conversationId: found.body.conversationId, message: "Buy the second one", requestId: randomUUID() }).expect(200);
+      expect(bought.body.message.action).toMatchObject({ status: "confirmed", offer: { offerId: "offer_brand_review" } });
+      expect(bought.body.message.action.signedQuote.payload.totalMinor).toBe("12500");
+      expect((await pool.query("SELECT id FROM orders")).rowCount).toBe(1);
     } finally {
       modelCall.mockRestore();
     }

@@ -22,6 +22,18 @@ type ChatMessage = {
   content: string;
   createdAt: string;
   offers: Offer[];
+  action: ChatPurchaseAction | null;
+};
+
+type ChatPurchaseAction = {
+  kind: "purchase";
+  purchaseId: string;
+  status: "ready" | "pending_approval" | "confirmed" | "needs_funding" | "expired" | "declined";
+  offer: Offer;
+  signedQuote: SignedQuote;
+  paymentId?: string;
+  approvalUrl?: string;
+  orderId?: string;
 };
 
 type SignedQuote = {
@@ -95,12 +107,34 @@ function OfferCard({ offer, onReview, disabled }: { offer: Offer; onReview: (off
   </article>;
 }
 
+function PurchaseActionCard({ action, disabled, onConfirm, onResume, onFunding, onFreshQuote }: {
+  action: ChatPurchaseAction;
+  disabled: boolean;
+  onConfirm: () => void;
+  onResume: () => void;
+  onFunding: () => void;
+  onFreshQuote: () => void;
+}) {
+  const quote = action.signedQuote.payload;
+  const approval = approvalHref(action.approvalUrl);
+  return <div className="chat-purchase-action">
+    <div className="chat-purchase-heading"><strong>{action.offer.name}</strong><span>{money(quote.totalMinor, quote.currency)}</span></div>
+    <p>{action.offer.merchantName} · {quote.fulfillmentMethod === "digital_download" ? "Digital download" : "Digital service"} · {refundTerms(action.offer.refundable, action.offer.refundWindowMinutes)}</p>
+    {action.status === "ready" && <><small>Signed quote expires {new Date(quote.expiresAt).toLocaleString("en-US")}</small><button className="primary-button" type="button" disabled={disabled} onClick={onConfirm}>Confirm purchase</button></>}
+    {action.status === "pending_approval" && <><small>PAYL approval required before the order can finish.</small>{approval && <a className="primary-button" href={approval} target="_blank" rel="noopener noreferrer">Open approval</a>}<button className="secondary-button" type="button" disabled={disabled} onClick={onResume}>I approved — finish order</button></>}
+    {action.status === "confirmed" && <small>Order confirmed · {action.orderId}</small>}
+    {action.status === "needs_funding" && <><small>Add funds to your PAYL wallet, then get a fresh quote.</small><button className="primary-button" type="button" disabled={disabled} onClick={onFunding}>Add funds</button><button className="secondary-button" type="button" disabled={disabled} onClick={onFreshQuote}>Get fresh quote</button></>}
+    {(action.status === "expired" || action.status === "declined") && <button className="secondary-button" type="button" disabled={disabled} onClick={onFreshQuote}>Get fresh quote</button>}
+  </div>;
+}
+
 const suggestions = ["What can I buy for under $100?", "Show refundable digital services", "Compare available downloads"];
 
 export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consumerRef: string; offline: boolean; onAddFunds: () => void }) {
   const router = useRouter();
   const transcriptRef = useRef<HTMLDivElement>(null);
   const conversationKey = `payl-chat:${consumerRef}`;
+  const chatSendKey = `payl-chat-send:${consumerRef}`;
   const pendingKey = `payl-checkout:${consumerRef}`;
   const fundingKey = `payl-funding:${consumerRef}`;
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -119,6 +153,10 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
     const savedConversationId = window.localStorage.getItem(conversationKey);
     const savedPending = window.sessionStorage.getItem(pendingKey);
     const savedFunding = window.sessionStorage.getItem(fundingKey);
+    try {
+      const unfinishedSend = JSON.parse(window.sessionStorage.getItem(chatSendKey) ?? "null") as { message?: string } | null;
+      if (unfinishedSend?.message) setDraft(unfinishedSend.message);
+    } catch { window.sessionStorage.removeItem(chatSendKey); }
     if (savedFunding) {
       try {
         const offer = JSON.parse(savedFunding) as Offer;
@@ -154,27 +192,43 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
       })
       .finally(() => { if (active) setLoadingHistory(false); });
     return () => { active = false; };
-  }, [conversationKey, pendingKey, fundingKey, offline]);
+  }, [conversationKey, pendingKey, fundingKey, chatSendKey, offline]);
 
   useEffect(() => {
     const transcript = transcriptRef.current;
     if (transcript) transcript.scrollTop = transcript.scrollHeight;
   }, [messages.length, busy]);
 
-  async function sendMessage(event?: FormEvent<HTMLFormElement>, prompt?: string) {
+  async function sendMessage(event?: FormEvent<HTMLFormElement>, prompt?: string, purchaseId?: string) {
     event?.preventDefault();
     const message = (prompt ?? draft).trim();
     if (!message || busy || offline || loadingHistory) return;
-    const optimistic: ChatMessage = { id: `local-${crypto.randomUUID()}`, role: "user", content: message, createdAt: new Date().toISOString(), offers: [] };
+    const pendingSend = (() => {
+      try { return JSON.parse(window.sessionStorage.getItem(chatSendKey) ?? "null") as { message?: string; purchaseId?: string; requestId?: string } | null; }
+      catch { return null; }
+    })();
+    const requestId = pendingSend?.message === message && pendingSend?.purchaseId === purchaseId && pendingSend.requestId
+      ? pendingSend.requestId : crypto.randomUUID();
+    window.sessionStorage.setItem(chatSendKey, JSON.stringify({ message, purchaseId, requestId }));
+    const optimistic: ChatMessage = { id: `local-${crypto.randomUUID()}`, role: "user", content: message, createdAt: new Date().toISOString(), offers: [], action: null };
     setMessages((current) => [...current, optimistic]);
     setDraft("");
     setError(null);
     setBusy("chat");
     try {
-      const reply = await postJson<ChatReply>("/api/consumer/chat", { conversationId: conversationId ?? undefined, message });
+      const reply = await postJson<ChatReply>("/api/consumer/chat", { conversationId: conversationId ?? undefined, message, requestId, purchaseId });
+      window.sessionStorage.removeItem(chatSendKey);
       window.localStorage.setItem(conversationKey, reply.conversationId);
       setConversationId(reply.conversationId);
       setMessages((current) => [...current, { ...reply.message, offers: reply.message.offers ?? reply.offers ?? [] }]);
+      if (reply.message.action?.status === "confirmed" || /Order confirmed:/.test(reply.message.content)) router.refresh();
+      try {
+        const response = await fetch(`/api/consumer/chat?conversationId=${encodeURIComponent(reply.conversationId)}`, { cache: "no-store" });
+        if (response.ok) {
+          const history = await response.json() as ChatHistory;
+          setMessages(history.messages);
+        }
+      } catch { /* The successful send remains visible if history refresh fails. */ }
     } catch (reason) {
       setMessages((current) => current.filter((item) => item.id !== optimistic.id));
       setDraft(message);
@@ -290,6 +344,7 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
   function newConversation() {
     if (busy) return;
     window.localStorage.removeItem(conversationKey);
+    window.sessionStorage.removeItem(chatSendKey);
     setConversationId(null);
     setMessages([]);
     setDraft("");
@@ -299,36 +354,37 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
   }
 
   const href = approvalHref(pending?.approvalUrl);
+  const showManualCheckout = !!review || !!pending || !!completed || !!needsFunding || busy === "quote";
 
-  return <section className="shop-layout" aria-label="Shop with AI">
+  return <section className={`shop-layout${showManualCheckout ? "" : " chat-only"}`} aria-label="Shop with AI">
     <div className="dashboard-panel shop-chat-panel">
-      <div className="shop-panel-header"><div><p className="section-label">PAYL commerce</p><h2>Ask about live offers</h2></div><button className="text-button" type="button" disabled={!!busy} onClick={newConversation}>New chat</button></div>
-      <p className="shop-intro">Explore the merchant catalog in plain language. Offer cards preserve the catalog results from each reply; checkout checks the current price and terms again.</p>
+      <div className="shop-panel-header"><div><p className="section-label">PAYL commerce</p><h2>Shop and buy with AI</h2></div><button className="text-button" type="button" disabled={!!busy} onClick={newConversation}>New chat</button></div>
+      <p className="shop-intro">Describe what you need, compare current offers, and tell PAYL AI which one to buy. PAYL checks a fresh signed quote and your wallet policy before placing the order.</p>
       <div className="shop-transcript" role="log" aria-live="polite" aria-label="Conversation" ref={transcriptRef}>
         {loadingHistory ? <p className="empty-state">Loading your conversation…</p> : messages.length === 0 ? <div className="shop-empty"><span className="shop-spark">✦</span><h3>What are you looking for?</h3><p>Ask for a product, budget, or refund terms. You can review an exact quote before buying.</p><div className="shop-suggestions">{suggestions.map((suggestion) => <button key={suggestion} type="button" disabled={!!busy || offline} onClick={() => void sendMessage(undefined, suggestion)}>{suggestion}</button>)}</div></div> : messages.map((message) => <div key={message.id} className={`shop-message ${message.role}`}>
           <div className="shop-message-label">{message.role === "user" ? "You" : "PAYL AI"}<time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</time></div>
           <p>{message.content}</p>
-          {message.role === "assistant" && message.offers?.length > 0 && <div className="chat-offer-list"><strong className="chat-offer-list-heading">Retrieved offers at {new Date(message.createdAt).toLocaleString("en-US")}</strong>{message.offers.map((offer) => <OfferCard key={`${message.id}:${offer.merchantId}:${offer.offerId}`} offer={offer} onReview={(selected) => void reviewOffer(selected)} disabled={!!busy || offline || !!pending} />)}</div>}
+          {message.role === "assistant" && message.action && <PurchaseActionCard action={message.action} disabled={!!busy || offline} onConfirm={() => void sendMessage(undefined, "Confirm purchase", message.action!.purchaseId)} onResume={() => void sendMessage(undefined, "I approved", message.action!.purchaseId)} onFunding={onAddFunds} onFreshQuote={() => void sendMessage(undefined, `Buy ${message.action!.offer.name}`)} />}
+          {message.role === "assistant" && !message.action && message.offers?.length > 0 && <div className="chat-offer-list"><strong className="chat-offer-list-heading">Retrieved offers at {new Date(message.createdAt).toLocaleString("en-US")}</strong>{message.offers.map((offer) => <OfferCard key={`${message.id}:${offer.merchantId}:${offer.offerId}`} offer={offer} onReview={(selected) => void reviewOffer(selected)} disabled={!!busy || offline || !!pending} />)}</div>}
         </div>)}
-        {busy === "chat" && <div className="shop-message assistant"><div className="shop-message-label">PAYL AI</div><p>Searching the live catalog…</p></div>}
+        {busy === "chat" && <div className="shop-message assistant"><div className="shop-message-label">PAYL AI</div><p>Checking live offers and your request…</p></div>}
       </div>
       {offline && <p className="form-notice error" role="alert">The PAYL API is unavailable. Chat will be ready when the wallet reconnects.</p>}
       {error && <p className="form-notice error" role="alert">{error}</p>}
       <form className="shop-composer" onSubmit={(event) => void sendMessage(event)}>
         <label htmlFor="shop-prompt">Message PAYL AI</label>
-        <textarea id="shop-prompt" rows={2} maxLength={2000} placeholder="Ask about merchants, prices, or refund terms…" value={draft} disabled={offline || loadingHistory || !!busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
+        <textarea id="shop-prompt" rows={2} maxLength={2000} placeholder="Find a refundable download under $50, then buy the one I choose…" value={draft} disabled={offline || loadingHistory || !!busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
         <div><span>Enter to send · Shift+Enter for a new line</span><button className="primary-button" type="submit" disabled={offline || loadingHistory || !!busy || !draft.trim()}>{busy === "chat" ? "Searching…" : "Send"}</button></div>
       </form>
     </div>
 
-    <aside className="dashboard-panel shop-checkout-panel" aria-label="Checkout">
+    {showManualCheckout && <aside className="dashboard-panel shop-checkout-panel" aria-label="Checkout">
       <p className="section-label">Checkout</p>
       {busy === "quote" && <><h2>Preparing quote</h2><p>Checking the current price and terms…</p></>}
       {review && <><h2>Review your quote</h2><p className="shop-checkout-merchant">{review.offer.merchantName}</p><h3>{review.offer.name}</h3><div className="shop-checkout-amount">{money(review.signedQuote.payload.totalMinor, review.signedQuote.payload.currency)}</div><dl className="shop-quote-details"><div><dt>Quantity</dt><dd>{review.signedQuote.payload.items[0]?.quantity ?? 1}</dd></div><div><dt>Fulfillment</dt><dd>{review.signedQuote.payload.fulfillmentMethod === "digital_download" ? "Digital download" : "Digital service"}</dd></div><div><dt>Refunds</dt><dd>{refundTerms(review.signedQuote.payload.refundPolicy?.refundable ?? review.offer.refundable, review.signedQuote.payload.refundPolicy?.refundWindowMinutes ?? review.offer.refundWindowMinutes)}</dd></div><div><dt>Quote expires</dt><dd>{new Date(review.signedQuote.payload.expiresAt).toLocaleString("en-US")}</dd></div></dl><p className="shop-checkout-note">PAYL checks your spending policy. A payment above your auto-approval limit will require your separate approval.</p><div className="shop-checkout-actions"><button className="primary-button" type="button" disabled={!!busy || offline} onClick={() => void confirmPurchase()}>{busy === "confirm" ? "Confirming…" : `Buy for ${money(review.signedQuote.payload.totalMinor, review.signedQuote.payload.currency)}`}</button><button className="secondary-button" type="button" disabled={!!busy} onClick={() => setReview(null)}>Cancel</button></div></>}
       {pending && <><h2>Approval required</h2><p>Review the exact amount and merchant in PAYL&apos;s approval screen. Then return here to finish checkout.</p><div className="shop-pending-summary"><strong>{pending.offer.name}</strong><span>{money(pending.signedQuote.payload.totalMinor, pending.signedQuote.payload.currency)} · {pending.offer.merchantName}</span></div>{href && <a className="primary-button shop-approval-link" href={href} target="_blank" rel="noopener noreferrer">Open approval</a>}<button className="secondary-button shop-resume-button" type="button" disabled={!!busy || offline} onClick={() => void completePurchase()}>{busy === "complete" ? "Checking approval…" : "I approved — finish checkout"}</button><button className="text-button shop-cancel-button" type="button" disabled={!!busy || offline} onClick={() => void cancelCheckout()}>{busy === "cancel" ? "Cancelling…" : "Cancel checkout"}</button></>}
       {completed && <><span className="shop-success-icon" aria-hidden="true">✓</span><h2>Order confirmed</h2><p>Your purchase is recorded in PAYL.</p>{(completed.orderId || completed.id) && <p className="shop-order-id">Order {completed.orderId ?? completed.id}</p>}<button className="secondary-button shop-resume-button" type="button" onClick={() => setCompleted(null)}>Close</button></>}
       {needsFunding && !review && !pending && !completed && busy !== "quote" && <><h2>Add funds to continue</h2><p>{needsFunding.name} needs more available PAYL funds. Fund your wallet with PayPal Sandbox, then request an updated signed quote.</p><div className="shop-checkout-actions"><button className="primary-button" type="button" onClick={onAddFunds}>Add funds</button><button className="secondary-button" type="button" disabled={!!busy || offline} onClick={() => void reviewOffer(needsFunding)}>Get fresh quote</button></div></>}
-      {!review && !pending && !completed && !needsFunding && busy !== "quote" && <><h2>Review before you pay</h2><p>Select a catalog result to see its current signed price, fulfillment, and refund terms. You decide when to buy.</p><div className="shop-checkout-placeholder"><span>1</span> Choose an offer <span>2</span> Review its quote <span>3</span> Confirm purchase</div></>}
-    </aside>
+    </aside>}
   </section>;
 }

@@ -314,6 +314,8 @@ export function createApp(
       response.set("cache-control", "no-store").json(await service.chat.reply(requireConsumerId(session), {
         conversationId: request.body?.conversationId,
         message: request.body?.message,
+        requestId: request.body?.requestId,
+        purchaseId: request.body?.purchaseId,
       }));
     } catch (error) {
       next(error);
