@@ -114,6 +114,8 @@ In the Render environment settings for `payl-api-dev3nigerian`, set `OPENAI_API_
 5. Sign in as the merchant and use **Settlement → Withdrawal account** to save and confirm the recipient's PayPal email. Withdraw the full payable amount. PAYL keeps 10% in reserve and holds the rest as pending until PayPal confirms the item. The dashboard status action and lifecycle worker reconcile delayed payouts.
 6. Test a PAYL AI purchase separately. The agent's quote, policy approval, mandate, and ledger capture remain the purchase authority; PayPal is used only when funds enter or leave PAYL.
 
+The consumer and merchant web services validate browser write requests against Render's `RENDER_EXTERNAL_URL`. No additional origin variable is needed for the `onrender.com` URLs above. If either web service uses a custom domain, set `PAYL_PUBLIC_WEB_URL` on that web service to its own public HTTPS URL and redeploy it.
+
 These are virtual Sandbox transfers. A live launch requires platform approval, country and Payouts eligibility, custody and safeguarding design, and production credentials. The current [PayPal Payouts country table](https://developer.paypal.com/payouts/supported-features/) does not list Nigeria.
 
 ## 6. Connect Codex
