@@ -305,7 +305,7 @@ function createCommerceNetworkServer(service: PaylService, consumerId: string): 
   const server = new McpServer(
     { name: "payl-commerce-network", version: "0.1.0" },
     {
-      instructions: "PAYL commerce is a multi-merchant sandbox network. Discover registered merchants and compare their active offers through this one connection. Every signed quote remains bound to exactly one merchant. Prepare payment through the wallet, then commit the unchanged quote and single-use mandate here. Digital downloads fulfill immediately; digital services remain pending until the merchant fulfills them. A consumer may cancel a pending-fulfillment order with commerce.cancel_order.",
+      instructions: "PAYL commerce is a multi-merchant sandbox network. Discover registered merchants and compare their active offers through this one connection. Every signed quote remains bound to exactly one merchant. Prepare payment through the wallet, then commit the unchanged quote and single-use mandate here. Digital downloads with an attached file fulfill immediately; other orders remain pending until the merchant attaches a result and fulfills them. A consumer may cancel a pending-fulfillment order with commerce.cancel_order.",
     },
   );
   registerCommerceNetworkTools(server, service, consumerId);

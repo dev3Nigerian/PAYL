@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { DeliveryUpload, ServiceIntakeEditor } from "./delivery-editor";
 
 type Offer = {
   offerId: string;
@@ -14,6 +16,8 @@ type Offer = {
   refundWindowMinutes: number | null;
   active: boolean;
   createdAt: string;
+  deliveryFileName?: string | null;
+  serviceIntakePrompt?: string | null;
 };
 
 export type MerchantState = {
@@ -45,6 +49,9 @@ export type MerchantState = {
     currency: string;
     offer_id?: string;
     offer_name?: string;
+    delivery_file_name?: string | null;
+    service_intake_prompt?: string | null;
+    service_details?: string | null;
     fulfillment_reference: string | null;
     fulfillment_deadline: string | null;
     fulfilled_at: string | null;
@@ -109,14 +116,20 @@ function refundTerms(offer: Offer): string {
 }
 
 function OrderTable({ state, onFulfill, fulfilling }: { state: MerchantState; onFulfill: (order: MerchantState["orders"][number]) => void; fulfilling: string | null }) {
+  const router = useRouter();
   if (state.orders.length === 0) return <p className="empty">No paid orders yet. Products become orders after an AI checkout completes.</p>;
   return <div className="table">{state.orders.map((order) => <div className="row" key={order.id}>
-    <div><strong>{order.offer_name ?? "Digital product"}</strong><span className="mono">{order.id}</span><small>{new Date(order.created_at).toLocaleString("en-US")}</small></div>
-    <span>{money(order.captured_amount_minor, order.currency)}{order.status === "refunded" && <small>PAYL fee retained: {money(order.retained_fee_minor ?? "0", order.currency)}</small>}{order.status === "confirmed" && order.fulfillment_deadline && <small>Due {new Date(order.fulfillment_deadline).toLocaleString("en-US")}</small>}</span><span className={order.status === "refunded" || order.status === "cancelled" ? "complete refunded" : "complete"}>{order.status.replaceAll("_", " ")}{order.status === "confirmed" && <button className="secondary-button" type="button" disabled={fulfilling === order.id} onClick={() => onFulfill(order)}>{fulfilling === order.id ? "Fulfilling…" : "Mark fulfilled"}</button>}</span>
+    <div><strong>{order.offer_name ?? "Digital product"}</strong><span className="mono">{order.id}</span><small>{new Date(order.created_at).toLocaleString("en-US")}</small>
+      {order.service_intake_prompt && <details><summary>Buyer requirements</summary><p>{order.service_intake_prompt}</p><p className="service-details-text">{order.service_details ?? "Waiting for the buyer to submit details in chat."}</p></details>}
+      {order.status === "confirmed" && <DeliveryUpload target="orders" id={order.id} fileName={order.delivery_file_name ?? null} onSaved={() => router.refresh()} />}
+      {order.status === "fulfilled" && order.delivery_file_name && <small>Delivered: {order.delivery_file_name}</small>}
+    </div>
+    <span>{money(order.captured_amount_minor, order.currency)}{order.status === "refunded" && <small>PAYL fee retained: {money(order.retained_fee_minor ?? "0", order.currency)}</small>}{order.status === "confirmed" && order.fulfillment_deadline && <small>Due {new Date(order.fulfillment_deadline).toLocaleString("en-US")}</small>}</span><span className={order.status === "refunded" || order.status === "cancelled" ? "complete refunded" : "complete"}>{order.status.replaceAll("_", " ")}{order.status === "confirmed" && <button className="secondary-button" type="button" disabled={fulfilling === order.id || !order.delivery_file_name || (!!order.service_intake_prompt && !order.service_details)} onClick={() => onFulfill(order)}>{fulfilling === order.id ? "Fulfilling…" : "Deliver to buyer"}</button>}</span>
   </div>)}</div>;
 }
 
 export default function MerchantDashboard({ initialState, offline }: { initialState: MerchantState; offline: boolean }) {
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("overview");
   const [offers, setOffers] = useState(initialState.offers ?? []);
   const [showCreate, setShowCreate] = useState(false);
@@ -233,8 +246,7 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
   }
 
   async function fulfillOrder(order: MerchantState["orders"][number]) {
-    const reference = window.prompt("Enter the merchant fulfillment reference", `delivery_${order.id.replaceAll("-", "_")}`);
-    if (!reference) return;
+    const reference = `delivery_${order.id.replaceAll("-", "_")}`;
     setFulfilling(order.id);
     setNotice(null);
     try {
@@ -245,7 +257,8 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
       });
       const body = await response.json() as { error?: { message?: string } };
       if (!response.ok) throw new Error(body.error?.message ?? "Order could not be fulfilled");
-      window.location.reload();
+      router.refresh();
+      setNotice({ kind: "ok", message: "Delivered. The buyer can now download the result in chat." });
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Order could not be fulfilled" });
       setFulfilling(null);
@@ -398,6 +411,8 @@ export default function MerchantDashboard({ initialState, offline }: { initialSt
         <div className="product-grid">{offers.map((offer) => <article className={`product-card ${offer.active ? "" : "inactive"}`} key={offer.offerId}>
           <div className="product-top"><span className={offer.active ? "product-status live" : "product-status"}>{offer.active ? "Live" : "Hidden"}</span><strong>{money(offer.priceMinor, offer.currency)}</strong></div>
           <h3>{offer.name}</h3><p>{offer.description}</p><div className={offer.refundable ? "refund-policy refundable" : "refund-policy"}>{refundTerms(offer)}</div><small>{offer.fulfillmentMethod.replaceAll("_", " ")} · <span className="mono">{offer.offerId}</span></small>
+          {offer.fulfillmentMethod === "digital_download" ? <DeliveryUpload target="offers" id={offer.offerId} fileName={offer.deliveryFileName ?? null} onSaved={(fileName) => setOffers((current) => current.map((item) => item.offerId === offer.offerId ? { ...item, deliveryFileName: fileName } : item))} />
+            : <ServiceIntakeEditor offerId={offer.offerId} prompt={offer.serviceIntakePrompt ?? null} onSaved={(prompt) => setOffers((current) => current.map((item) => item.offerId === offer.offerId ? { ...item, serviceIntakePrompt: prompt } : item))} />}
           <div className="product-actions"><button className="secondary-button" type="button" onClick={() => editRefundPolicy(offer)}>Edit refund policy</button><button className="secondary-button" type="button" onClick={() => void toggleProduct(offer)}>{offer.active ? "Hide from agents" : "Publish product"}</button></div>
         </article>)}</div>
       </section>}

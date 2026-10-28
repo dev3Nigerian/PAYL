@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { ShoppingBriefCard, ShoppingDetails, type ShoppingBrief, type ChatDetails } from "./shopping-cards";
 
 type Offer = {
   offerId: string;
@@ -22,7 +23,8 @@ type ChatMessage = {
   content: string;
   createdAt: string;
   offers: Offer[];
-  action: ChatPurchaseAction | null;
+  action: ChatAction | null;
+  details?: ChatDetails;
 };
 
 type ChatPurchaseAction = {
@@ -35,6 +37,9 @@ type ChatPurchaseAction = {
   approvalUrl?: string;
   orderId?: string;
 };
+
+type ChatAction = ChatPurchaseAction | { kind: "order_operation"; actionId: string; operation: "cancel" | "refund" | "submit_details"; orderId: string; offerName: string; details?: string; status: "ready" | "completed" | "failed" };
+type SendOptions = { purchaseId?: string; actionId?: string; quoteHash?: string };
 
 type SignedQuote = {
   payload: {
@@ -55,8 +60,8 @@ type QuoteReview = { signedQuote: SignedQuote; offer: Offer; confirmKey: string 
 type PendingCheckout = { signedQuote: SignedQuote; offer: Offer; paymentId: string; approvalUrl: string | undefined; completionKey: string };
 type CompletedOrder = { orderId?: string; id?: string; status?: string };
 
-type ChatReply = { conversationId: string; message: ChatMessage; offers: Offer[] };
-type ChatHistory = { conversationId: string; messages: ChatMessage[] };
+type ChatReply = { conversationId: string; message: ChatMessage; offers: Offer[]; brief?: ShoppingBrief };
+type ChatHistory = { conversationId: string; messages: ChatMessage[]; brief: ShoppingBrief };
 type QuoteReply = { signedQuote: SignedQuote; offer: Offer };
 type CheckoutReply =
   | { status: "pending_approval"; approvalUrl?: string; paymentId: string }
@@ -99,6 +104,36 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return data;
 }
 
+async function streamChat(body: unknown, onProgress: (step: string) => void): Promise<ChatReply> {
+  const response = await fetch("/api/consumer/chat", { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson" }, body: JSON.stringify(body) });
+  if (!response.ok || !response.headers.get("content-type")?.includes("application/x-ndjson")) {
+    const data = await response.json() as ChatReply & { error?: { code?: string; message?: string } };
+    if (!response.ok) throw new ApiError(data.error?.message ?? "Chat could not be completed", response.status, data.error?.code);
+    return data;
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Chat connection was interrupted. Send the same message to recover.");
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line) as { type: string; message?: string; reply?: ChatReply; error?: { code?: string; message?: string } };
+        if (event.type === "progress" && event.message) onProgress(event.message);
+        if (event.type === "result" && event.reply) return event.reply;
+        if (event.type === "error") throw new ApiError(event.error?.message ?? "Chat could not finish", 503, event.error?.code);
+      }
+      if (done) break;
+    }
+  } finally { reader.releaseLock(); }
+  throw new Error("Chat connection was interrupted. Send the same message to recover the result.");
+}
+
 function OfferCard({ offer, onReview, disabled }: { offer: Offer; onReview: (offer: Offer) => void; disabled: boolean }) {
   return <article className="chat-offer-card">
     <div className="chat-offer-source"><span>Catalog snapshot</span><span>{offer.merchantName}</span></div>
@@ -123,12 +158,12 @@ function PurchaseActionCard({ action, disabled, onConfirm, onResume, onFunding, 
     {action.status === "ready" && <><small>Signed quote expires {new Date(quote.expiresAt).toLocaleString("en-US")}</small><button className="primary-button" type="button" disabled={disabled} onClick={onConfirm}>Confirm purchase</button></>}
     {action.status === "pending_approval" && <><small>PAYL approval required before the order can finish.</small>{approval && <a className="primary-button" href={approval} target="_blank" rel="noopener noreferrer">Open approval</a>}<button className="secondary-button" type="button" disabled={disabled} onClick={onResume}>I approved — finish order</button></>}
     {action.status === "confirmed" && <small>Order confirmed · {action.orderId}</small>}
-    {action.status === "needs_funding" && <><small>Add funds to your PAYL wallet, then get a fresh quote.</small><button className="primary-button" type="button" disabled={disabled} onClick={onFunding}>Add funds</button><button className="secondary-button" type="button" disabled={disabled} onClick={onFreshQuote}>Get fresh quote</button></>}
-    {(action.status === "expired" || action.status === "declined") && <button className="secondary-button" type="button" disabled={disabled} onClick={onFreshQuote}>Get fresh quote</button>}
+    {action.status === "needs_funding" && <><small>Your selection is saved. Add funds, then resume here.</small><button className="primary-button" type="button" disabled={disabled} onClick={onFunding}>Add funds</button><button className="secondary-button" type="button" disabled={disabled} onClick={onFreshQuote}>Resume purchase</button></>}
+    {(action.status === "expired" || action.status === "declined") && <button className="secondary-button" type="button" disabled={disabled} onClick={onFreshQuote}>Resume purchase</button>}
   </div>;
 }
 
-const suggestions = ["What can I buy for under $100?", "Show refundable digital services", "Compare available downloads"];
+const suggestions = ["Find a refundable download under $100", "How much can I spend?", "Show my orders and downloads"];
 
 export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consumerRef: string; offline: boolean; onAddFunds: () => void }) {
   const router = useRouter();
@@ -140,6 +175,8 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [brief, setBrief] = useState<ShoppingBrief | null>(null);
+  const [progress, setProgress] = useState<string[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [busy, setBusy] = useState<"chat" | "quote" | "confirm" | "complete" | "cancel" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -185,6 +222,7 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
         if (!active) return;
         setConversationId(body.conversationId);
         setMessages(body.messages);
+        setBrief(body.brief);
       })
       .catch((reason: unknown) => {
         if (!active) return;
@@ -197,36 +235,42 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
   useEffect(() => {
     const transcript = transcriptRef.current;
     if (transcript) transcript.scrollTop = transcript.scrollHeight;
-  }, [messages.length, busy]);
+  }, [messages.length, busy, progress]);
 
-  async function sendMessage(event?: FormEvent<HTMLFormElement>, prompt?: string, purchaseId?: string) {
+  async function sendMessage(event?: FormEvent<HTMLFormElement>, prompt?: string, options: SendOptions = {}) {
     event?.preventDefault();
     const message = (prompt ?? draft).trim();
     if (!message || busy || offline || loadingHistory) return;
     const pendingSend = (() => {
-      try { return JSON.parse(window.sessionStorage.getItem(chatSendKey) ?? "null") as { message?: string; purchaseId?: string; requestId?: string } | null; }
+      try { return JSON.parse(window.sessionStorage.getItem(chatSendKey) ?? "null") as { message?: string; options?: SendOptions; requestId?: string } | null; }
       catch { return null; }
     })();
-    const requestId = pendingSend?.message === message && pendingSend?.purchaseId === purchaseId && pendingSend.requestId
+    if (!prompt && pendingSend?.message === message && pendingSend.options) options = pendingSend.options;
+    const requestId = pendingSend?.message === message && JSON.stringify(pendingSend?.options ?? {}) === JSON.stringify(options) && pendingSend.requestId
       ? pendingSend.requestId : crypto.randomUUID();
-    window.sessionStorage.setItem(chatSendKey, JSON.stringify({ message, purchaseId, requestId }));
+    window.sessionStorage.setItem(chatSendKey, JSON.stringify({ message, options, requestId }));
     const optimistic: ChatMessage = { id: `local-${crypto.randomUUID()}`, role: "user", content: message, createdAt: new Date().toISOString(), offers: [], action: null };
     setMessages((current) => [...current, optimistic]);
     setDraft("");
     setError(null);
     setBusy("chat");
+    setProgress(["Connecting to PAYL…"]);
     try {
-      const reply = await postJson<ChatReply>("/api/consumer/chat", { conversationId: conversationId ?? undefined, message, requestId, purchaseId });
+      const reply = await streamChat({ conversationId: conversationId ?? undefined, message, requestId, ...options }, (step) => {
+        setProgress((current) => current.at(-1) === step ? current : [...current.slice(-6), step]);
+      });
+      if (reply.brief) setBrief(reply.brief);
       window.sessionStorage.removeItem(chatSendKey);
       window.localStorage.setItem(conversationKey, reply.conversationId);
       setConversationId(reply.conversationId);
       setMessages((current) => [...current, { ...reply.message, offers: reply.message.offers ?? reply.offers ?? [] }]);
-      if (reply.message.action?.status === "confirmed" || /Order confirmed:/.test(reply.message.content)) router.refresh();
+      if (reply.message.action?.status === "confirmed" || reply.message.details?.orders?.length || /Order confirmed:/.test(reply.message.content)) router.refresh();
       try {
         const response = await fetch(`/api/consumer/chat?conversationId=${encodeURIComponent(reply.conversationId)}`, { cache: "no-store" });
         if (response.ok) {
           const history = await response.json() as ChatHistory;
           setMessages(history.messages);
+          setBrief(history.brief);
         }
       } catch { /* The successful send remains visible if history refresh fails. */ }
     } catch (reason) {
@@ -346,11 +390,33 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
     window.localStorage.removeItem(conversationKey);
     window.sessionStorage.removeItem(chatSendKey);
     setConversationId(null);
+    setBrief(null);
     setMessages([]);
     setDraft("");
     setError(null);
     setNeedsFunding(null);
     window.sessionStorage.removeItem(fundingKey);
+  }
+
+  async function submitServiceDetails(orderId: string, details: string) {
+    await postJson(`/api/consumer/orders/${encodeURIComponent(orderId)}/details`, { details });
+    if (conversationId) {
+      const response = await fetch(`/api/consumer/chat?conversationId=${encodeURIComponent(conversationId)}`, { cache: "no-store" });
+      if (response.ok) setMessages((await response.json() as ChatHistory).messages);
+    }
+    router.refresh();
+  }
+
+  function actionCard(action: ChatAction) {
+    if (action.kind === "purchase") return <PurchaseActionCard action={action} disabled={!!busy || offline}
+      onConfirm={() => void sendMessage(undefined, "Confirm purchase", { purchaseId: action.purchaseId, quoteHash: action.signedQuote.hash })}
+      onResume={() => void sendMessage(undefined, "I approved", { purchaseId: action.purchaseId })}
+      onFunding={onAddFunds} onFreshQuote={() => void sendMessage(undefined, "Resume purchase", { purchaseId: action.purchaseId })} />;
+    return <div className="chat-purchase-action"><strong>{action.operation === "submit_details" ? "Submit service requirements" : action.operation === "refund" ? "Refund order" : "Cancel order"}: {action.offerName}</strong>
+      <small>{action.orderId}</small>{action.details && <p className="service-details-text">{action.details}</p>}
+      {action.status === "ready" ? <button className="primary-button" disabled={!!busy || offline} onClick={() => void sendMessage(undefined, "Confirm action", { actionId: action.actionId })}>Confirm {action.operation === "submit_details" ? "submission" : action.operation}</button>
+        : <small>{action.status === "completed" ? "Action completed" : "Action could not be completed. Check the latest order status."}</small>}
+    </div>;
   }
 
   const href = approvalHref(pending?.approvalUrl);
@@ -360,21 +426,23 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
     <div className="dashboard-panel shop-chat-panel">
       <div className="shop-panel-header"><div><p className="section-label">PAYL commerce</p><h2>Shop and buy with AI</h2></div><button className="text-button" type="button" disabled={!!busy} onClick={newConversation}>New chat</button></div>
       <p className="shop-intro">Describe what you need, compare current offers, and tell PAYL AI which one to buy. PAYL checks a fresh signed quote and your wallet policy before placing the order.</p>
+      <ShoppingBriefCard brief={brief} disabled={!!busy || offline} onReset={() => void sendMessage(undefined, "Clear shopping brief")} />
       <div className="shop-transcript" role="log" aria-live="polite" aria-label="Conversation" ref={transcriptRef}>
         {loadingHistory ? <p className="empty-state">Loading your conversation…</p> : messages.length === 0 ? <div className="shop-empty"><span className="shop-spark">✦</span><h3>What are you looking for?</h3><p>Ask for a product, budget, or refund terms. You can review an exact quote before buying.</p><div className="shop-suggestions">{suggestions.map((suggestion) => <button key={suggestion} type="button" disabled={!!busy || offline} onClick={() => void sendMessage(undefined, suggestion)}>{suggestion}</button>)}</div></div> : messages.map((message) => <div key={message.id} className={`shop-message ${message.role}`}>
           <div className="shop-message-label">{message.role === "user" ? "You" : "PAYL AI"}<time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</time></div>
           <p>{message.content}</p>
-          {message.role === "assistant" && message.action && <PurchaseActionCard action={message.action} disabled={!!busy || offline} onConfirm={() => void sendMessage(undefined, "Confirm purchase", message.action!.purchaseId)} onResume={() => void sendMessage(undefined, "I approved", message.action!.purchaseId)} onFunding={onAddFunds} onFreshQuote={() => void sendMessage(undefined, `Buy ${message.action!.offer.name}`)} />}
+          {message.role === "assistant" && message.action && actionCard(message.action)}
+          {message.role === "assistant" && <ShoppingDetails details={message.details} disabled={!!busy || offline} onMessage={(prompt) => void sendMessage(undefined, prompt)} onDetails={submitServiceDetails} />}
           {message.role === "assistant" && !message.action && message.offers?.length > 0 && <div className="chat-offer-list"><strong className="chat-offer-list-heading">Retrieved offers at {new Date(message.createdAt).toLocaleString("en-US")}</strong>{message.offers.map((offer) => <OfferCard key={`${message.id}:${offer.merchantId}:${offer.offerId}`} offer={offer} onReview={(selected) => void reviewOffer(selected)} disabled={!!busy || offline || !!pending} />)}</div>}
         </div>)}
-        {busy === "chat" && <div className="shop-message assistant"><div className="shop-message-label">PAYL AI</div><p>Checking live offers and your request…</p></div>}
+        {busy === "chat" && <div className="shop-message assistant"><div className="shop-message-label">PAYL AI</div><ol className="chat-progress" aria-label="Current activity">{progress.map((step, index) => <li key={`${index}:${step}`} className={index === progress.length - 1 ? "active" : "done"}>{step}</li>)}</ol></div>}
       </div>
       {offline && <p className="form-notice error" role="alert">The PAYL API is unavailable. Chat will be ready when the wallet reconnects.</p>}
       {error && <p className="form-notice error" role="alert">{error}</p>}
       <form className="shop-composer" onSubmit={(event) => void sendMessage(event)}>
         <label htmlFor="shop-prompt">Message PAYL AI</label>
         <textarea id="shop-prompt" rows={2} maxLength={2000} placeholder="Find a refundable download under $50, then buy the one I choose…" value={draft} disabled={offline || loadingHistory || !!busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-        <div><span>Enter to send · Shift+Enter for a new line</span><button className="primary-button" type="submit" disabled={offline || loadingHistory || !!busy || !draft.trim()}>{busy === "chat" ? "Searching…" : "Send"}</button></div>
+        <div><span>Enter to send · Shift+Enter for a new line</span><button className="primary-button" type="submit" disabled={offline || loadingHistory || !!busy || !draft.trim()}>{busy === "chat" ? "Working…" : "Send"}</button></div>
       </form>
     </div>
 

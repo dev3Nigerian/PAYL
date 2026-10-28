@@ -308,18 +308,74 @@ export function createApp(
     },
   });
   app.post("/api/consumer/chat", chatLimiter, async (request, response, next) => {
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     try {
       assertConsumerWriteOrigin(request, config);
       const session = await requireWebSession(request, identity, "consumer");
-      response.set("cache-control", "no-store").json(await service.chat.reply(requireConsumerId(session), {
+      const streaming = request.accepts("application/x-ndjson") && request.header("accept") === "application/x-ndjson";
+      if (streaming) {
+        response.set({ "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store, no-transform", "x-accel-buffering": "no" });
+        response.flushHeaders();
+        heartbeat = setInterval(() => { if (!response.destroyed) response.write('{"type":"heartbeat"}\n'); }, 15_000);
+      }
+      const reply = await service.chat.reply(requireConsumerId(session), {
         conversationId: request.body?.conversationId,
         message: request.body?.message,
         requestId: request.body?.requestId,
         purchaseId: request.body?.purchaseId,
-      }));
+        actionId: request.body?.actionId,
+        quoteHash: request.body?.quoteHash,
+      }, (message) => { if (streaming && !response.destroyed) response.write(`${JSON.stringify({ type: "progress", message })}\n`); });
+      if (streaming) response.end(`${JSON.stringify({ type: "result", reply })}\n`);
+      else response.set("cache-control", "no-store").json(reply);
     } catch (error) {
-      next(error);
+      if (response.headersSent) response.end(`${JSON.stringify({ type: "error", error: { code: error instanceof DomainError ? error.code : "CHAT_UNAVAILABLE", message: error instanceof DomainError ? error.message : "Chat could not finish. Retry the same message to recover your result." } })}\n`);
+      else next(error);
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
     }
+  });
+  app.get("/api/consumer/orders", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "consumer");
+      response.set("cache-control", "no-store").json({ orders: await service.delivery.orders(requireConsumerId(session)) });
+    } catch (error) { next(error); }
+  });
+  app.get("/api/consumer/orders/:orderId/download", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "consumer");
+      const file = await service.delivery.download(requireConsumerId(session), request.params.orderId ?? "");
+      response.set({ "cache-control": "private, no-store", "content-type": "application/octet-stream", "x-content-type-options": "nosniff",
+        "content-disposition": `attachment; filename="${file.file_name}"` }).send(file.contents);
+    } catch (error) { next(error); }
+  });
+  app.post("/api/consumer/orders/:orderId/details", async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "consumer");
+      response.json(await service.delivery.submitDetails(requireConsumerId(session), request.params.orderId ?? "", request.body?.details));
+    } catch (error) { next(error); }
+  });
+  app.post("/api/merchant/offers/:offerId/delivery", express.raw({ type: "application/octet-stream", limit: "5mb" }), async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json(await service.delivery.upload(requireMerchantId(session), { offerId: request.params.offerId ?? "" }, request.query.fileName, request.body));
+    } catch (error) { next(error); }
+  });
+  app.post("/api/merchant/orders/:orderId/delivery", express.raw({ type: "application/octet-stream", limit: "5mb" }), async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json(await service.delivery.upload(requireMerchantId(session), { orderId: request.params.orderId ?? "" }, request.query.fileName, request.body));
+    } catch (error) { next(error); }
+  });
+  app.post("/api/merchant/offers/:offerId/intake", async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "merchant_admin");
+      response.json(await service.delivery.setIntakePrompt(requireMerchantId(session), request.params.offerId ?? "", request.body?.prompt));
+    } catch (error) { next(error); }
   });
   app.post("/api/consumer/checkout/quote", async (request, response, next) => {
     try {

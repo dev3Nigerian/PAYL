@@ -31,6 +31,7 @@ import type { Config } from "./config.js";
 import { inTransaction } from "./db.js";
 import { DomainError, requireValue } from "./errors.js";
 import { ConsumerChatService } from "./chat.js";
+import { DeliveryService } from "./delivery.js";
 import { HttpPayPalGateway, type PayPalCapture, type PayPalGateway, type PayPalPayoutBatch } from "./paypal.js";
 
 export const DIGITAL_GOODS_TERMS_V1 = "PAYL sandbox digital goods terms v1. Simulated funds only. No live payment or settlement occurs.";
@@ -54,6 +55,8 @@ type OfferRow = {
 type MerchantOfferRow = OfferRow & {
   active: boolean;
   created_at: Date;
+  delivery_file_name: string | null;
+  service_intake_prompt: string | null;
 };
 
 type PaymentRow = {
@@ -179,6 +182,7 @@ export class PaylService {
   private readonly paylKey: SigningKey;
   private readonly paypal: PayPalGateway | null;
   readonly chat: ConsumerChatService;
+  readonly delivery: DeliveryService;
 
   constructor(
     private readonly pool: pg.Pool,
@@ -186,6 +190,7 @@ export class PaylService {
     paypalGateway?: PayPalGateway | null,
   ) {
     this.chat = new ConsumerChatService(pool, config, this);
+    this.delivery = new DeliveryService(pool);
     this.paylKey = this.signingKey("payl-mandate-issuer", "payl-sandbox-2026-01", "mandate");
     this.paypal = paypalGateway === undefined
       ? (config.paypal ? new HttpPayPalGateway(config.paypal) : null)
@@ -235,6 +240,13 @@ export class PaylService {
          ON CONFLICT (id) DO NOTHING`,
         [this.config.sandboxMerchantId],
       );
+      await client.query(
+        `INSERT INTO delivery_assets(id, merchant_id, file_name, content_type, contents)
+         VALUES ('asset_sandbox_research', $1, 'market-research-sample.txt', 'text/plain', $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [this.config.sandboxMerchantId, Buffer.from("PAYL SANDBOX SAMPLE: Market research worksheet\n\nThis is a demonstration deliverable, not commissioned market research.\n\n1. Define your customer: role, location, buying trigger.\n2. List three alternatives and compare price, delivery time, and refunds.\n3. Interview five customers about their last purchase.\n4. Record evidence and source dates for every market claim.\n5. Test one offer with a fixed budget and measure completed purchases.\n\nDecision worksheet\nCustomer segment: __________\nProblem observed: __________\nEvidence and date: __________\nAlternatives: __________\nPrice hypothesis: __________\nNext experiment: __________\n")],
+      );
+      await client.query("UPDATE offers SET delivery_asset_id = 'asset_sandbox_research' WHERE id = 'offer_research_pack' AND merchant_id = $1 AND delivery_asset_id IS NULL", [this.config.sandboxMerchantId]);
       await client.query(
         `INSERT INTO spending_policies(
            consumer_id, version, auto_approve_limit_minor, per_transaction_limit_minor, daily_limit_minor, currency
@@ -385,8 +397,8 @@ export class PaylService {
     const result = await this.pool.query<MerchantOfferRow>(
       `SELECT o.id, o.merchant_id, m.name AS merchant_name, m.server_id, o.name, o.description,
               o.price_minor::text, o.currency, o.fulfillment_method, o.refundable,
-              o.refund_window_minutes, o.active, o.created_at
-       FROM offers o JOIN merchants m ON m.id = o.merchant_id
+              o.refund_window_minutes, o.active, o.created_at, a.file_name AS delivery_file_name, o.service_intake_prompt
+       FROM offers o JOIN merchants m ON m.id = o.merchant_id LEFT JOIN delivery_assets a ON a.id = o.delivery_asset_id
        WHERE o.merchant_id = $1
        ORDER BY o.created_at DESC, o.id`,
       [merchantId],
@@ -402,6 +414,8 @@ export class PaylService {
       refundable: offer.refundable,
       refundWindowMinutes: offer.refund_window_minutes,
       active: offer.active,
+      deliveryFileName: offer.delivery_file_name,
+      serviceIntakePrompt: offer.service_intake_prompt,
       createdAt: offer.created_at.toISOString(),
     }));
   }
@@ -526,6 +540,9 @@ export class PaylService {
     }
     const offer = await this.loadOffer(merchantId, offerId);
     const quoteId = newId("quote");
+    const delivery = requireValue((await this.pool.query<{ delivery_asset_id: string | null; service_intake_prompt: string | null }>(
+      "SELECT delivery_asset_id, service_intake_prompt FROM offers WHERE id = $1 AND merchant_id = $2", [offerId, merchantId],
+    )).rows[0], "OFFER_NOT_FOUND", "Product was not found");
     const unit = asBigInt(offer.price_minor);
     const total = unit * BigInt(quantity);
     const createdAt = iso();
@@ -551,7 +568,7 @@ export class PaylService {
       totalMinor: total.toString(),
       currency: offer.currency,
       fulfillmentMethod: offer.fulfillment_method,
-      estimatedCompletion: "immediate",
+      estimatedCompletion: offer.fulfillment_method === "digital_download" && delivery.delivery_asset_id ? "immediate" : "after_merchant_delivery",
       termsUri: new URL("/terms/digital-goods-v1", this.config.publicBaseUrl).href,
       termsHash: sha256Hex(DIGITAL_GOODS_TERMS_V1),
       refundPolicy: {
@@ -565,8 +582,8 @@ export class PaylService {
     const signedQuote = SignedQuoteSchema.parse({ payload, jws, hash: sha256Hex(jws) });
     await this.pool.query(
       `INSERT INTO quotes(
-        id, merchant_id, offer_id, nonce, total_minor, currency, payload, jws, quote_hash, status, expires_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, 'active', $10)`,
+        id, merchant_id, offer_id, nonce, total_minor, currency, payload, jws, quote_hash, status, expires_at, delivery_asset_id, service_intake_prompt
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, 'active', $10, $11, $12)`,
       [
         quoteId,
         merchantId,
@@ -578,6 +595,8 @@ export class PaylService {
         jws,
         signedQuote.hash,
         payload.expiresAt,
+        delivery.delivery_asset_id,
+        delivery.service_intake_prompt,
       ],
     );
     await this.audit(this.pool, quoteId, "merchant", merchantId, "quote.created", "quote", quoteId, {
@@ -1123,7 +1142,11 @@ export class PaylService {
         fulfillmentDeadline: fulfillmentDeadline.toISOString(),
       }, `order-created:${orderId}`);
 
-      if (signedQuote.payload.fulfillmentMethod === "digital_download") {
+      const delivery = (await client.query<{ delivery_asset_id: string | null }>(
+        `UPDATE orders o SET delivery_asset_id = q.delivery_asset_id, service_intake_prompt = q.service_intake_prompt
+         FROM quotes q WHERE o.id = $1 AND q.id = o.quote_id RETURNING o.delivery_asset_id`, [orderId],
+      )).rows[0];
+      if (signedQuote.payload.fulfillmentMethod === "digital_download" && delivery?.delivery_asset_id) {
         await this.fulfillOrderLocked(client, {
           merchantId: input.merchantId,
           orderId,
@@ -2415,7 +2438,8 @@ export class PaylService {
         `SELECT o.id, o.status, o.captured_amount_minor::text, o.currency,
                 m.name AS merchant_name, f.id AS offer_id, f.name AS offer_name,
                 o.fulfillment_reference, o.fulfillment_deadline, o.fulfilled_at,
-                o.cancelled_at, o.cancellation_reason, o.refunded_at,
+                o.cancelled_at, o.cancellation_reason, o.refunded_at, o.service_intake_prompt, o.service_details,
+                (SELECT file_name FROM delivery_assets WHERE id = o.delivery_asset_id) AS delivery_file_name,
                 r.retained_fee_minor::text, o.created_at
          FROM orders o
          JOIN merchants m ON m.id = o.merchant_id
@@ -2586,10 +2610,14 @@ export class PaylService {
         refundable: boolean;
         refund_window_minutes: number | null;
         fulfillment_deadline: Date | null;
+        delivery_asset_id: string | null;
+        service_intake_prompt: string | null;
+        service_details: string | null;
       }>(
         `SELECT o.id, o.merchant_id, o.quote_id, o.mandate_id, o.payment_id, p.consumer_id,
                 o.status, o.captured_amount_minor::text, o.platform_fee_minor::text, o.currency,
-                o.refundable, o.refund_window_minutes, o.fulfillment_deadline
+                o.refundable, o.refund_window_minutes, o.fulfillment_deadline,
+                o.delivery_asset_id, o.service_intake_prompt, o.service_details
          FROM orders o JOIN payment_intents p ON p.id = o.payment_id
          WHERE o.id = $1 FOR UPDATE OF o, p`,
         [input.orderId],
@@ -2609,6 +2637,13 @@ export class PaylService {
         actorType: "system",
       });
       return;
+    }
+
+    if (!order.delivery_asset_id) {
+      throw new DomainError("DELIVERY_REQUIRED", "Attach the purchased file or completed service result before fulfilling this order", 409);
+    }
+    if (order.service_intake_prompt && !order.service_details) {
+      throw new DomainError("SERVICE_DETAILS_REQUIRED", "The buyer must submit the requested service requirements before fulfillment", 409);
     }
 
     const accounts = await client.query<{ id: string; account_type: "pending_payable" | "payable" }>(

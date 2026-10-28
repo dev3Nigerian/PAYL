@@ -296,6 +296,7 @@ describe("PAYL signed quote to receipt flow", () => {
       priceMinor: "1000",
       fulfillmentMethod: "digital_download",
     });
+    await service.delivery.upload("merchant_demo", { offerId: nonRefundable.offerId as string }, "final-report.txt", Buffer.from("The purchased final sale report"));
     const finalQuote = await service.createQuote("merchant_demo", nonRefundable.offerId as string, 1);
     const finalPayment = await service.preparePayment({
       consumerId: "consumer_demo",
@@ -404,6 +405,8 @@ describe("PAYL signed quote to receipt flow", () => {
       mandate: secondPayment.mandate,
       idempotencyKey: "commit-second-multi-001",
     });
+    await service.delivery.upload("merchant_demo", { orderId: atlasOrder.orderId }, "result.txt", Buffer.from("Atlas service result"));
+    await service.delivery.upload(secondMerchantId, { orderId: secondReceipt.orderId }, "result.txt", Buffer.from("Second merchant result"));
     await service.fulfillOrder({
       merchantId: "merchant_demo",
       orderId: atlasOrder.orderId,

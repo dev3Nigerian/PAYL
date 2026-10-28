@@ -239,3 +239,22 @@ h1 { margin: 0; font-size: clamp(30px, 6vw, 48px); line-height: 1.02; letter-spa
 .paypal-topup-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; border-top: 1px solid var(--line); padding: 12px 0; }
 .paypal-topup-row:first-of-type { border-top: 0; }
 .paypal-topup-row span, .paypal-topup-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.shopping-brief { margin: 0 24px 16px; padding: 14px 16px; border: 1px solid #dbe6de; border-radius: 12px; background: #f6faf7; }
+.shopping-brief > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.shopping-brief p { margin: 8px 0; line-height: 1.5; }
+.shopping-brief small, .chat-order-card small, .chat-wallet-card small { display: block; color: #5b6b63; line-height: 1.5; }
+.chat-order-card, .chat-wallet-card { margin-top: 14px; padding: 18px; border: 1px solid #d5dfd9; border-radius: 12px; background: #fff; }
+.chat-order-card > a { display: inline-block; margin-top: 14px; overflow-wrap: anywhere; }
+.chat-order-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; }
+.chat-wallet-card dl > div { display: flex; justify-content: space-between; gap: 18px; padding: 8px 0; }
+.chat-wallet-card dd { margin: 0; font-weight: 600; }
+.service-intake { display: grid; gap: 10px; margin-top: 16px; }
+.service-intake label { line-height: 1.5; }
+.service-intake textarea { resize: vertical; width: 100%; min-height: 90px; padding: 12px; border: 1px solid #c9d6ce; border-radius: 8px; font: inherit; }
+.service-details-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-progress { list-style: none; padding: 0; display: grid; gap: 8px; font-size: 13px; }
+.chat-progress li { display: flex; align-items: center; gap: 8px; }
+.chat-progress li::before { content: "✓"; color: #187949; }
+.chat-progress li.active::before { content: ""; width: 12px; height: 12px; border: 2px solid #bdd2c4; border-top-color: #187949; border-radius: 50%; animation: chat-spin 1s linear infinite; }
+@keyframes chat-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .chat-progress li.active::before { animation: none; } }

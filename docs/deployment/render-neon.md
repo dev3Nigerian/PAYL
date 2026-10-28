@@ -103,7 +103,18 @@ Then verify this sequence:
 
 ### Enable in-app shopping chat
 
-In the Render environment settings for `payl-api-dev3nigerian`, set `DEEPSEEK_API_KEY` as a secret. Optionally set `DEEPSEEK_MODEL` (the default is `deepseek-flash`), then redeploy the API service. Existing `OPENAI_API_KEY` and `OPENAI_MODEL` values are no longer used and can be removed after the DeepSeek deployment succeeds. Keep the key off the consumer web service and out of `NEXT_PUBLIC_` variables. Sign in to the consumer dashboard and open **Shop with AI**. Ask for live offers, then say “Buy the second one” to exercise the signed quote, wallet policy, and order flow in chat. A purchase above the auto-approval limit still requires separate MFA approval. This feature adds no new environment variables; redeploy both API and consumer web services. The API applies migration `0010_chat_purchases.sql` at startup.
+In the Render environment settings for `payl-api-dev3nigerian`, set `DEEPSEEK_API_KEY` as a secret. Optionally set `DEEPSEEK_MODEL` (the default is `deepseek-flash`), then redeploy the API service. Existing `OPENAI_API_KEY` and `OPENAI_MODEL` values are no longer used and can be removed after the DeepSeek deployment succeeds. Keep the key off the consumer web service and out of `NEXT_PUBLIC_` variables. Sign in to the consumer dashboard and open **Shop with AI**. Ask for live offers, then say “Buy the second one” to exercise the signed quote, wallet policy, and order flow in chat. A purchase above the auto-approval limit still requires separate MFA approval. The shopping workspace adds no new environment variables. Redeploy **API, consumer web, and merchant web** services. The API applies migrations through `0012_chat_turn_leases.sql` at startup. Migration 0011 stores shopping briefs, action details, and delivery files in Postgres; no Render disk is required. Migration 0012 prevents overlapping chat actions across API instances without holding a database connection open during model calls. Allow the API migration to finish before using the updated web apps.
+
+After deployment:
+
+1. In merchant **Products**, attach the actual downloadable file (maximum 5 MB) or configure the service requirements. Existing download products without a file will stay pending after purchase until the merchant attaches a result and fulfills the order. Previously fulfilled orders are not retroactively assigned a file.
+2. In consumer **Shop with AI**, set a budget and refund requirement, refine the search, and verify the shopping brief remains visible. Ask for the wallet balance and order history.
+3. Buy an eligible item and verify the authenticated download. For a service, submit requirements in the chat card, upload the result from merchant **Orders**, and deliver it.
+4. Exercise a purchase needing funding or MFA, then resume it. A changed quote must require confirmation; retries must create only one order. Test a refund or pre-delivery cancellation and check reconciliation.
+5. Chat progress uses a streaming `application/x-ndjson` response through the consumer web proxy. The route sends heartbeat messages during model work. If another proxy is placed in front of Render, disable response buffering for the chat POST route.
+
+The local automated suite uses model responses and payment fixtures. Run a real DeepSeek and PayPal Sandbox walkthrough with your server credentials before the hackathon demo.
+
 
 ### Enable PayPal Sandbox funding and withdrawals
 
