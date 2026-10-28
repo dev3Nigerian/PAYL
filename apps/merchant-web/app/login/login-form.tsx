@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { AuthShell, Icon } from "@payl/ui";
 
-export default function LoginForm({ demoEmail, demoPassword, prefilled }: { demoEmail: string; demoPassword: string; prefilled: boolean }) {
+export default function LoginForm({ demoEmail, demoPassword, prefilled, homeUrl, consumerLogin }: { demoEmail: string; demoPassword: string; prefilled: boolean; homeUrl: string; consumerLogin: string }) {
   const [email, setEmail] = useState(demoEmail);
   const [password, setPassword] = useState(demoPassword);
   const [error, setError] = useState("");
@@ -20,23 +21,23 @@ export default function LoginForm({ demoEmail, demoPassword, prefilled }: { demo
       });
       const body = await readJson(response) as { error?: { message?: string } };
       if (!response.ok) throw new Error(body.error?.message ?? "Sign-in failed");
-      window.location.assign("/");
+      window.location.assign(`/dashboard${window.location.hash}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Sign-in failed");
       setBusy(false);
     }
   }
 
-  return <main className="auth-shell"><form className="auth-card" onSubmit={submit}>
-    <div className="brand">PAYL</div><p className="eyebrow">Merchant identity</p><h1>Sign in to your business</h1>
-    <p>Catalog, orders, and settlement information are scoped to this merchant account.</p>
-    <label><span>Email</span><input aria-label="Email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-    <label><span>Password</span><input aria-label="Password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-    {error && <p className="form-notice error">{error}</p>}
-    <button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+  return <AuthShell role="merchant" homeHref={homeUrl} switchHref={consumerLogin}><form className="auth-card" onSubmit={submit} aria-busy={busy}>
+    <p className="eyebrow">Your merchant workspace</p><h1>Back to business.</h1>
+    <p>Sign in to manage your products, deliver orders, and follow your earnings.</p>
+    <label><span>Email address</span><input required aria-label="Email" type="email" autoComplete="username" placeholder="you@business.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+    <label><span>Password</span><input required aria-label="Password" type="password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+    {error && <p className="form-notice error" role="alert">{error}</p>}
+    <button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in to your business"}<Icon name="arrow" size={16} /></button>
     <small>{prefilled ? "Sandbox credentials are prefilled for local testing." : "Use the credentials supplied by the sandbox owner."}</small>
-    <a className="auth-link" href="/register">Register another merchant</a>
-  </form></main>;
+    <a className="auth-link" href="/register">New to PAYL? Create a merchant account</a>
+  </form></AuthShell>;
 }
 
 async function readJson(response: Response): Promise<unknown> {

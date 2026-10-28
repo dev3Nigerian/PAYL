@@ -2,8 +2,9 @@
 
 import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { AuthShell, Icon } from "@payl/ui";
 
-export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefilled }: { demoEmail: string; demoPassword: string; apiOrigin: string; prefilled: boolean }) {
+export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefilled, merchantLogin }: { demoEmail: string; demoPassword: string; apiOrigin: string; prefilled: boolean; merchantLogin: string }) {
   const search = useSearchParams();
   const [email, setEmail] = useState(demoEmail);
   const [password, setPassword] = useState(demoPassword);
@@ -29,7 +30,7 @@ export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefille
         handoff.searchParams.set("returnTo", requested);
         window.location.assign(handoff);
       } else {
-        window.location.assign(requested && isLocalReturnTo(requested) ? requested : "/");
+        window.location.assign(requested && isLocalReturnTo(requested) ? requested : `/dashboard${window.location.hash}`);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Sign-in failed");
@@ -37,15 +38,15 @@ export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefille
     }
   }
 
-  return <main className="shell"><form className="card login-card" onSubmit={submit}>
-    <div className="brand">PAYL</div><p className="eyebrow">Consumer identity</p><h1>Sign in to your wallet</h1>
-    <p className="muted">Your dashboard, policies, approvals, and MCP grants are isolated to this account.</p>
-    <label className="login-field"><span>Email</span><input aria-label="Email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-    <label className="login-field"><span>Password</span><input aria-label="Password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-    {error && <p className="error">{error}</p>}
-    <button className="primary-button login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+  return <AuthShell role="consumer" homeHref="/" switchHref={merchantLogin}><form className="card login-card" onSubmit={submit} aria-busy={busy}>
+    <p className="eyebrow">Your personal workspace</p><h1>Welcome back.</h1>
+    <p className="muted">A good find is waiting. Sign in to shop with AI and manage your PAYL wallet.</p>
+    <label className="login-field"><span>Email address</span><input required aria-label="Email" type="email" autoComplete="username" placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+    <label className="login-field"><span>Password</span><input required aria-label="Password" type="password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+    {error && <p className="error" role="alert">{error}</p>}
+    <button className="primary-button login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in to PAYL"}<Icon name="arrow" size={16} /></button>
     <p className="fineprint">{prefilled ? "Local sandbox credentials are prefilled." : "Use the credentials supplied by the sandbox owner."} Payment approval separately requires your six-digit authenticator code.</p>
-  </form></main>;
+  </form></AuthShell>;
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -59,7 +60,7 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 function isLocalReturnTo(value: string): boolean {
-  return value.startsWith("/") && !value.startsWith("//");
+  return value.startsWith("/") && !value.startsWith("//") && !value.includes("\\");
 }
 
 function isOAuthReturnTo(value: string, apiOrigin: string): boolean {

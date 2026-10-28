@@ -10,6 +10,7 @@ COPY apps/merchant-web/package.json apps/merchant-web/package.json
 COPY apps/reference-agent/package.json apps/reference-agent/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/crypto/package.json packages/crypto/package.json
+COPY packages/ui/package.json packages/ui/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY . .

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { Icon, type IconName } from "@payl/ui";
 import { ShoppingBriefCard, ShoppingDetails, type ShoppingBrief, type ChatDetails } from "./shopping-cards";
 
 type Offer = {
@@ -163,7 +164,11 @@ function PurchaseActionCard({ action, disabled, onConfirm, onResume, onFunding, 
   </div>;
 }
 
-const suggestions = ["Find a refundable download under $100", "How much can I spend?", "Show my orders and downloads"];
+const suggestions: Array<{ title: string; description: string; prompt: string; icon: IconName }> = [
+  { title: "Find my next purchase", description: "Discover something within budget", prompt: "Find a refundable digital download under $50", icon: "search" },
+  { title: "Check my spending power", description: "See my wallet and spending limits", prompt: "How much can I spend?", icon: "wallet" },
+  { title: "Pick up where I left off", description: "Find my orders and downloads", prompt: "Show my orders and downloads", icon: "box" },
+];
 
 export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consumerRef: string; offline: boolean; onAddFunds: () => void }) {
   const router = useRouter();
@@ -234,7 +239,7 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
 
   useEffect(() => {
     const transcript = transcriptRef.current;
-    if (transcript) transcript.scrollTop = transcript.scrollHeight;
+    if (transcript) transcript.scrollTop = messages.length > 0 || busy ? transcript.scrollHeight : 0;
   }, [messages.length, busy, progress]);
 
   async function sendMessage(event?: FormEvent<HTMLFormElement>, prompt?: string, options: SendOptions = {}) {
@@ -424,11 +429,11 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
 
   return <section className={`shop-layout${showManualCheckout ? "" : " chat-only"}`} aria-label="Shop with AI">
     <div className="dashboard-panel shop-chat-panel">
-      <div className="shop-panel-header"><div><p className="section-label">PAYL commerce</p><h2>Shop and buy with AI</h2></div><button className="text-button" type="button" disabled={!!busy} onClick={newConversation}>New chat</button></div>
-      <p className="shop-intro">Describe what you need, compare current offers, and tell PAYL AI which one to buy. PAYL checks a fresh signed quote and your wallet policy before placing the order.</p>
+      <div className="shop-panel-header"><div className="chat-identity"><span><Icon name="sparkles" size={18} /></span><div><h2>PAYL AI</h2><p>Your shopping companion</p></div></div><button className="secondary-button" type="button" disabled={!!busy} onClick={newConversation}><Icon name="plus" size={15} /> New chat</button></div>
+      <p className="shop-intro"><Icon name="shield" size={14} /> Your spending rules apply to every purchase.</p>
       <ShoppingBriefCard brief={brief} disabled={!!busy || offline} onReset={() => void sendMessage(undefined, "Clear shopping brief")} />
       <div className="shop-transcript" role="log" aria-live="polite" aria-label="Conversation" ref={transcriptRef}>
-        {loadingHistory ? <p className="empty-state">Loading your conversation…</p> : messages.length === 0 ? <div className="shop-empty"><span className="shop-spark">✦</span><h3>What are you looking for?</h3><p>Ask for a product, budget, or refund terms. You can review an exact quote before buying.</p><div className="shop-suggestions">{suggestions.map((suggestion) => <button key={suggestion} type="button" disabled={!!busy || offline} onClick={() => void sendMessage(undefined, suggestion)}>{suggestion}</button>)}</div></div> : messages.map((message) => <div key={message.id} className={`shop-message ${message.role}`}>
+        {loadingHistory ? <p className="empty-state" role="status">Loading your conversation…</p> : messages.length === 0 ? <div className="shop-empty"><span className="shop-spark"><Icon name="sparkles" size={30} /></span><span className="overline">A little inspiration goes a long way</span><h3>What’s on your mind?</h3><p>A tool for your next project? A service to get you unstuck? Tell me what you need, and we’ll find your fit.</p><div className="shop-suggestions">{suggestions.map((suggestion) => <button key={suggestion.title} type="button" disabled={!!busy || offline} onClick={() => void sendMessage(undefined, suggestion.prompt)}><Icon name={suggestion.icon} size={19} /><strong>{suggestion.title}</strong><span>{suggestion.description}</span><Icon name="arrow" size={14} /></button>)}</div></div> : messages.map((message) => <div key={message.id} className={`shop-message ${message.role}`}>
           <div className="shop-message-label">{message.role === "user" ? "You" : "PAYL AI"}<time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</time></div>
           <p>{message.content}</p>
           {message.role === "assistant" && message.action && actionCard(message.action)}
@@ -441,8 +446,8 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
       {error && <p className="form-notice error" role="alert">{error}</p>}
       <form className="shop-composer" onSubmit={(event) => void sendMessage(event)}>
         <label htmlFor="shop-prompt">Message PAYL AI</label>
-        <textarea id="shop-prompt" rows={2} maxLength={2000} placeholder="Find a refundable download under $50, then buy the one I choose…" value={draft} disabled={offline || loadingHistory || !!busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-        <div><span>Enter to send · Shift+Enter for a new line</span><button className="primary-button" type="submit" disabled={offline || loadingHistory || !!busy || !draft.trim()}>{busy === "chat" ? "Working…" : "Send"}</button></div>
+        <textarea id="shop-prompt" rows={2} maxLength={2000} placeholder="Tell me what you’re looking for…" value={draft} disabled={offline || loadingHistory || !!busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
+        <div><span>Enter to send · Shift+Enter for a new line</span><button className="primary-button" type="submit" disabled={offline || loadingHistory || !!busy || !draft.trim()}>{busy === "chat" ? "Working…" : "Send message"}<Icon name="send" size={16} /></button></div>
       </form>
     </div>
 

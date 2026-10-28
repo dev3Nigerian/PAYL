@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { Icon, StatusBadge } from "@payl/ui";
+import { DashboardNavigation, useDashboardTab, type NavigationItem } from "@payl/ui/navigation";
 import ShopWithAi from "./shop-with-ai";
 import PayPalTopup, { type Topup } from "./paypal-topup";
 
@@ -56,13 +58,13 @@ export type McpEndpoints = { consumer: string };
 
 type Tab = "wallet" | "shop" | "connect" | "activity" | "permissions" | "security";
 
-const tabs: Array<{ id: Tab; label: string }> = [
-  { id: "wallet", label: "Wallet" },
-  { id: "shop", label: "Shop with AI" },
-  { id: "connect", label: "Connect AI" },
-  { id: "activity", label: "Activity" },
-  { id: "permissions", label: "AI permissions" },
-  { id: "security", label: "Security" },
+const tabs: NavigationItem<Tab>[] = [
+  { id: "shop", label: "Shop with AI", icon: "sparkles" },
+  { id: "wallet", label: "My wallet", icon: "wallet" },
+  { id: "activity", label: "Orders & activity", icon: "orders" },
+  { id: "permissions", label: "Spending controls", icon: "settings" },
+  { id: "connect", label: "Connected AI", icon: "connect" },
+  { id: "security", label: "Security", icon: "shield" },
 ];
 
 function money(amountMinor: string | undefined, currency = "USD"): string {
@@ -113,12 +115,12 @@ function ActivityList({
   refunding: string | null;
   cancelling: string | null;
 }) {
-  if (!state || state.orders.length === 0) return <p className="empty-state">No purchases yet. Shop with PAYL AI or connect your own AI client to get started.</p>;
+  if (!state || state.orders.length === 0) return <div className="empty-illustration"><Icon name="box" /><h3>Your next find starts here</h3><p>Once you make a purchase, you can follow its progress and manage it here.</p><a className="primary-button" href="#shop">Find something with AI <Icon name="arrow" size={16} /></a></div>;
   return <div className="activity-list">{state.orders.map((order) => (
     <div className="activity-row" key={order.id}>
       <div className={order.status === "refunded" || order.status === "cancelled" ? "activity-icon refunded" : "activity-icon"}>{order.status === "refunded" ? "RF" : order.status === "cancelled" ? "CX" : "AI"}</div>
       <div><strong>{order.offer_name ?? order.merchant_name}</strong><span>{order.merchant_name} · {new Date(order.created_at).toLocaleString("en-US")}</span><small className="refund-detail">{refundLabel(order)}</small></div>
-      <div className="activity-amount"><strong>{order.status === "refunded" || order.status === "cancelled" ? "+" : "-"}{money(order.captured_amount_minor, order.currency)}</strong><span>{order.status.replaceAll("_", " ")}</span>{order.status === "confirmed" && <button className="refund-button" type="button" disabled={cancelling === order.id} onClick={() => onCancel(order)}>{cancelling === order.id ? "Cancelling…" : "Cancel order"}</button>}{order.status === "fulfilled" && order.refundable && order.refund_eligible_until && new Date(order.refund_eligible_until).getTime() >= Date.now() && <button className="refund-button" type="button" disabled={refunding === order.id} onClick={() => onRefund(order)}>{refunding === order.id ? "Refunding…" : "Refund purchase"}</button>}</div>
+      <div className="activity-amount"><strong>{order.status === "refunded" || order.status === "cancelled" ? "+" : "-"}{money(order.captured_amount_minor, order.currency)}</strong><StatusBadge status={order.status} />{order.status === "confirmed" && <button className="refund-button" type="button" disabled={cancelling === order.id} onClick={() => onCancel(order)}>{cancelling === order.id ? "Cancelling…" : "Cancel order"}</button>}{order.status === "fulfilled" && order.refundable && order.refund_eligible_until && new Date(order.refund_eligible_until).getTime() >= Date.now() && <button className="refund-button" type="button" disabled={refunding === order.id} onClick={() => onRefund(order)}>{refunding === order.id ? "Refunding…" : "Refund purchase"}</button>}</div>
     </div>
   ))}</div>;
 }
@@ -236,8 +238,8 @@ function ConnectAiPanel({
   </section>;
 }
 
-export default function WalletDashboard({ initialState, mcpEndpoints }: { initialState: WalletState | null; mcpEndpoints: McpEndpoints }) {
-  const [tab, setTab] = useState<Tab>("wallet");
+export default function WalletDashboard({ initialState, mcpEndpoints, merchantUrl }: { initialState: WalletState | null; mcpEndpoints: McpEndpoints; merchantUrl: string }) {
+  const [tab, setTab] = useDashboardTab(tabs, "shop");
   const [policy, setPolicy] = useState<Policy | null>(initialState?.policy ?? null);
   const [connections, setConnections] = useState(initialState?.connections ?? []);
   const [draft, setDraft] = useState(() => ({
@@ -339,40 +341,30 @@ export default function WalletDashboard({ initialState, mcpEndpoints }: { initia
 
   async function logout() {
     const response = await fetch("/api/auth/logout", { method: "POST" });
+    if (!response.ok) throw new Error("Sign-out failed");
     const body = await response.json() as { browserLogoutUrl?: string };
     window.location.assign(body.browserLogoutUrl ?? "/login");
   }
 
   const headings: Record<Tab, [string, string]> = {
-    wallet: ["Consumer wallet", "Good to see you."],
-    shop: ["Shop with AI", "Find what fits."],
-    connect: ["AI connection", "Connect once, shop everywhere."],
-    activity: ["Wallet activity", "Agent purchases"],
-    permissions: ["AI permissions", "Set spending boundaries"],
-    security: ["Wallet security", "How PAYL protects payment authority"],
+    wallet: ["Your money, your move", "My wallet"],
+    shop: ["Your personal shopping companion", "A good find starts here."],
+    connect: ["Bring your own assistant", "Connected AI"],
+    activity: ["Every purchase, in one place", "Orders & activity"],
+    permissions: ["A little autonomy. A lot of control.", "Your spending rules"],
+    security: ["Built around your control", "Wallet security"],
   };
 
   return (
-    <main className="dashboard-shell">
-      <aside className="consumer-sidebar">
-        <div className="brand brand-light">PAYL</div>
-        <div className="profile-mark">DC</div>
-        <strong>{initialState?.wallet.displayName ?? "Demo Consumer"}</strong>
-        <span className="profile-ref">{initialState?.wallet.consumerRef ?? "consumer_demo"}</span>
-        <nav className="consumer-nav" aria-label="Consumer dashboard">
-          {tabs.map((item) => <button key={item.id} type="button" className={tab === item.id ? "nav-active" : ""} onClick={() => setTab(item.id)}>{item.label}</button>)}
-        </nav>
-        <div className="sandbox-note">Sandbox wallet<br />Simulated funds only<button className="logout-button" type="button" onClick={() => void logout()}>Sign out</button></div>
-      </aside>
-
-      <section className="dashboard-content">
-        <div className="mobile-nav" aria-label="Consumer dashboard mobile navigation">
-          {tabs.map((item) => <button key={item.id} type="button" className={tab === item.id ? "nav-active" : ""} onClick={() => setTab(item.id)}>{item.label}</button>)}
-        </div>
+    <div className="dashboard-shell">
+      <DashboardNavigation items={tabs} tab={tab} role="consumer" name={initialState?.wallet.displayName ?? "Your account"} homeHref="/" switchHref={merchantUrl} onLogout={logout} />
+      <main className="dashboard-content" data-section={tab} id="dashboard-main" tabIndex={-1}>
         <header className="dashboard-header">
           <div><p className="section-label">{headings[tab][0]}</p><h1>{headings[tab][1]}</h1></div>
-          <span className={initialState ? "health-badge" : "health-badge health-bad"}>{initialState ? "Wallet active" : "API offline"}</span>
+          <div className="header-actions"><div className="header-balance"><small>Available · Sandbox USD</small><strong>{initialState ? money(initialState.wallet.balances.available, initialState.wallet.currency) : "Unavailable"}</strong></div><button className="secondary-button" type="button" onClick={() => setTab("wallet")}><Icon name="plus" size={16} /> Add funds</button></div>
         </header>
+        {!initialState && <div className="offline-banner" role="alert">Your wallet is temporarily unavailable. Please reconnect before shopping or adding funds.<button className="text-button" type="button" onClick={() => window.location.reload()}>Try again</button></div>}
+        {notice && tab !== "permissions" && tab !== "activity" && <p role="status" className={`form-notice ${notice.kind}`}>{notice.message}</p>}
 
         {tab === "wallet" && <>
           <section className="wallet-hero">
@@ -386,7 +378,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints }: { initia
               <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} onCancel={(order) => void cancelOrder(order)} refunding={refunding} cancelling={cancelling} />
             </article>
             <aside className="dashboard-panel policy-panel">
-              <p className="section-label">AI spending policy</p><h2>Bounded authority</h2>
+              <p className="section-label">Your safety net</p><h2>Spending controls</h2>
               <div className="policy-line"><span>Auto-approve up to</span><strong>{money(policy?.autoApproveLimitMinor, policy?.currency)}</strong></div>
               <div className="policy-line"><span>Per transaction</span><strong>{money(policy?.perTransactionLimitMinor, policy?.currency)}</strong></div>
               <div className="policy-line"><span>Daily limit</span><strong>{money(policy?.dailyLimitMinor, policy?.currency)}</strong></div>
@@ -401,7 +393,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints }: { initia
         {tab === "connect" && <ConnectAiPanel endpoint={mcpEndpoints.consumer} connections={connections} onRevoke={(clientId, resource) => void revokeConnection(clientId, resource)} />}
 
         {tab === "activity" && <article className="dashboard-panel section-panel">
-          <div className="panel-title"><div><p className="section-label">Ledger activity</p><h2>Completed purchases</h2></div><span>{initialState?.orders.length ?? 0} total</span></div>
+          <div className="panel-title"><div><p className="section-label">Your purchase history</p><h2>All orders</h2></div><span>{initialState?.orders.length ?? 0} total</span></div>
           {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
           <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} onCancel={(order) => void cancelOrder(order)} refunding={refunding} cancelling={cancelling} />
           <div className="paypal-topup-history"><h3>PayPal funding</h3>
@@ -437,7 +429,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints }: { initia
           <article className="dashboard-panel security-card"><span className="security-icon">03</span><h2>No reusable credential</h2><p>MCP clients see scoped wallet tools, never an underlying card or bank credential.</p></article>
           <article className="dashboard-panel security-card"><span className="security-icon">04</span><h2>MFA approval</h2><p>Human-approved payments require a fresh six-digit authenticator code before funds can be reserved.</p></article>
         </section>}
-      </section>
-    </main>
+      </main>
+    </div>
   );
 }

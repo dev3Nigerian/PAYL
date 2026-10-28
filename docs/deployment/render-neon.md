@@ -155,3 +155,16 @@ Use `.codex/config.hosted.example.toml` as the template. The consumer dashboard'
 - [Render Docker deployment](https://render.com/docs/docker)
 - [Neon pricing](https://neon.com/pricing)
 - [Neon connection pooling](https://neon.com/docs/connect/connection-pooling)
+
+### Landing page and workspace links
+
+The consumer web service now serves the public PAYL landing page at `/` and the authenticated shopper workspace at `/dashboard`. The merchant workspace is at `/dashboard` on the merchant web service; its existing `/` address redirects there. Existing approval and OAuth callback URLs remain valid.
+
+Redeploy both web services for the new UI. No new secrets or database migrations are needed for the frontend redesign. The Blueprint includes these public, server-side URL settings:
+
+| Render service | Environment key | Value |
+| --- | --- | --- |
+| `payl-consumer-dev3nigerian` | `MERCHANT_WEB_URL` | `https://payl-merchant-dev3nigerian.onrender.com` |
+| `payl-merchant-dev3nigerian` | `APPROVAL_WEB_URL` | `https://payl-consumer-dev3nigerian.onrender.com` |
+
+These values control landing-page, sign-in, and workspace-switch links. Production defaults use the addresses above; set the keys explicitly if you use custom domains. Local development defaults to ports 3000 and 3001. Keep `PAYL_API_URL` and the existing origin-validation settings unchanged.

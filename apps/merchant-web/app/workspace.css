@@ -1,0 +1,88 @@
+.workspace-header h1 { font-size: clamp(25px, 2.7vw, 33px); }
+.merchant-balance { margin-top: 26px; border-radius: 16px; box-shadow: none; background: #244737; }
+.merchant-balance > div { padding: 28px 30px; }
+.merchant-balance > div + div { background: #ffffff09; border-left: 1px solid #ffffff15; }
+.merchant-balance strong { font-weight: 500; font-variant-numeric: tabular-nums; }
+.merchant-balance span, .merchant-balance small { font-size: 11px; line-height: 1.6; }
+.metrics { gap: 12px; }
+.metrics article { padding: 20px 17px; border-radius: 12px; }
+.metrics span { font-size: 10px; line-height: 1.5; }
+.metrics strong { margin-top: 15px; font-size: clamp(18px, 2vw, 26px); font-weight: 550; }
+.panelhead { padding: 20px 23px; }
+.panelhead h2 { font-size: 17px; }
+.row { grid-template-columns: minmax(0, 1.8fr) minmax(95px, .7fr) minmax(100px, .65fr); gap: 16px; padding: 22px 23px; font-size: 12px; align-items: flex-start; }
+.row > * { min-width: 0; overflow-wrap: anywhere; }
+.row strong { font-weight: 650; margin-bottom: 6px; }
+.row small, .row .mono { font-size: 10px; color: var(--muted); line-height: 1.6; }
+.row .complete { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.row .secondary-button { padding: 9px 10px; min-height: 36px; font-size: 10px; }
+.row details { margin-top: 13px; font-size: 11px; }
+.row summary { color: var(--green); cursor: pointer; }
+.row details p { line-height: 1.7; }
+.orders-layout { grid-template-columns: minmax(0, 1fr); }
+.workflow-card { padding: 22px; background: #f1f5e9; border-color: #e1e8d6; }
+.workflow-card h2 { font-size: 18px; }
+.workflow-card > p:not(.eyebrow) { font-size: 12px; }
+.workflow-card ol { display: grid; grid-template-columns: repeat(3, 1fr); gap: 25px; margin-top: 18px; }
+.workflow-card li { margin-top: 0; font-size: 11px; }
+.fulfillment-callout { display: flex; align-items: center; gap: 14px; margin-top: 24px; padding: 19px 22px; border: 1px solid #e4dcc3; border-radius: 13px; background: #faf7ec; }
+.callout-icon { display: grid; place-items: center; flex: 0 0 37px; height: 37px; border-radius: 10px; color: #8d7950; background: #f2ebd8; }
+.fulfillment-callout strong { display: block; font-size: 13px; font-weight: 650; }
+.fulfillment-callout p { margin: 5px 0 0; font-size: 11px; color: #8b816a; line-height: 1.5; }
+.fulfillment-callout button { margin-left: auto; white-space: nowrap; min-height: 36px; padding: 10px 12px; font-size: 11px; }
+.list-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px 23px; border-bottom: 1px solid var(--line); }
+.search-field { display: flex; align-items: center; gap: 9px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; color: #89937f; background: #fff; }
+.search-field:focus-within { border-color: #789362; box-shadow: 0 0 0 3px #78936218; }
+.search-field input { min-width: 0; width: 100%; padding: 12px 0; border: 0; outline: none; background: transparent; font-size: 12px; }
+.list-toolbar .search-field { flex: 1 1 200px; }
+.list-toolbar select { padding: 10px 12px; min-height: 42px; border: 1px solid var(--line); border-radius: 8px; background: white; font-size: 12px; color: var(--muted); }
+.section-actions h2 { font-size: 22px; font-weight: 550; }
+.section-actions .search-field { min-width: 220px; }
+.product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.product-card { padding: 25px; }
+.product-card.inactive { opacity: 1; background: #fafbf7; }
+.product-top > strong { font-size: 22px; font-weight: 550; letter-spacing: -.04em; }
+.product-status { font-size: 9px; padding: 5px 8px; font-weight: 600; text-transform: none; }
+.product-status.live { color: #4c7040; background: #eaf2df; }
+.product-card h3 { margin-top: 22px; font-size: 19px; font-weight: 600; }
+.product-card p { font-size: 12px; min-height: auto; line-height: 1.8; }
+.product-card > small { font-size: 10px; }
+.product-card .mono { display: inline; color: #9da492; }
+.refund-policy { width: fit-content; font-size: 10px; font-weight: 500; padding: 7px 9px; }
+.product-actions button { font-size: 11px; min-height: 38px; padding: 10px; }
+.product-form { border-radius: 14px; padding: 25px; }
+.product-form input, .product-form textarea, .product-form select { font-size: 13px; }
+.product-form label > span { font-size: 12px; font-weight: 600; }
+.product-form small { font-size: 11px; line-height: 1.7; color: var(--muted); }
+.delivery-editor { background: #f8faf4; border-color: #e4e9dc; padding: 13px; margin: 14px 0; }
+.delivery-editor label { font-size: 11px; }
+.delivery-editor input { font-size: 10px; }
+.delivery-editor input::file-selector-button { padding: 8px 10px; margin-right: 9px; border: 1px solid #d8e1cd; border-radius: 6px; color: var(--green); background: white; cursor: pointer; font: inherit; }
+.delivery-editor small { margin: 0; font-size: 10px; text-transform: none; }
+.delivery-editor button { font-size: 11px; padding: 9px 12px; min-height: 36px; }
+.mcp-card { display: block; padding: 0; margin-top: 20px; border: 1px solid var(--line); border-radius: 12px; background: #f1f5e9; }
+.mcp-card summary { display: flex; align-items: center; gap: 11px; padding: 18px 22px; cursor: pointer; font-size: 12px; list-style: none; }
+.mcp-card summary::after { content: "+"; margin-left: 4px; font-size: 18px; }
+.mcp-card[open] summary::after { content: "−"; }
+.mcp-card summary::-webkit-details-marker { display: none; }
+.mcp-card summary small { margin: 0 0 0 auto; font-size: 10px; }
+.mcp-card > div { padding: 0 22px 22px; }
+.mcp-card p { font-size: 12px; line-height: 1.7; }
+.mcp-card code, .mcp-card small { font-size: 10px; overflow-wrap: anywhere; }
+.mcp-card button { margin-top: 15px; min-height: 36px; font-size: 11px; }
+.settlement-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settlement-hero { border-radius: 16px; background: #244737; padding: 30px; }
+.settlement-hero strong { font-weight: 500; font-size: 45px; }
+.settlement-hero span, .settlement-hero small { font-size: 12px; line-height: 1.8; }
+.settlement-hero button { margin-top: 23px; background: var(--lime); color: var(--green); }
+.settlement-hero button:hover:not(:disabled) { background: #e6f4be; }
+.settlement-detail { padding: 10px 22px 20px; }
+.settlement-detail > div { font-size: 12px; }
+.settlement-detail > div > strong { text-align: right; font-weight: 650; }
+.settlement-detail button { margin-top: 12px; font-size: 11px; }
+.settlement-grid > .form-notice, .settlement-grid > .panel:last-child { grid-column: 1 / -1; }
+.panel > .form-notice { margin-inline: 22px; }
+@media (min-width: 1500px) { .product-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 1100px) { .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } .section-actions { flex-wrap: wrap; } .product-grid, .settlement-grid { grid-template-columns: 1fr; } }
+@media (max-width: 800px) { .merchant-balance { grid-template-columns: 1fr 1fr; } .merchant-balance > div { padding: 22px; } .merchant-balance strong { font-size: 32px; } .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metrics article:last-child { grid-column: 1 / -1; } .metrics strong { font-size: 23px; } .fulfillment-callout { flex-wrap: wrap; } .fulfillment-callout > div { flex: 1; min-width: 160px; } .fulfillment-callout button { margin-left: 51px; } .workflow-card ol { grid-template-columns: 1fr; gap: 18px; } .row { grid-template-columns: minmax(0, 1fr) auto; padding: 20px; } .row > .complete { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; } .mcp-card summary small { display: none; } .mcp-card summary::after { margin-left: auto; } }
+@media (max-width: 440px) { .merchant-balance { grid-template-columns: 1fr; } .merchant-balance > div + div { border-left: 0; border-top: 1px solid #ffffff15; } .merchant-balance strong { font-size: 37px; } .section-actions .search-field { width: 100%; } .list-toolbar { padding-inline: 18px; } .list-toolbar select { width: 100%; } .settlement-hero strong { font-size: 40px; } .row { grid-template-columns: 1fr; } .row > .complete { grid-column: auto; } .product-form { padding: 20px; } }

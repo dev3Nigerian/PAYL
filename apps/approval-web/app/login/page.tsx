@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import LoginForm from "./login-form";
+import { webUrls } from "@payl/ui/urls";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export default function LoginPage() {
       demoPassword={prefilled ? process.env.SANDBOX_CONSUMER_PASSWORD ?? "ConsumerDemo!2026" : ""}
       apiOrigin={apiOrigin}
       prefilled={prefilled}
+      merchantLogin={webUrls().merchantLogin}
     />
   </Suspense>;
 }

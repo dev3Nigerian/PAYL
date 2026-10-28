@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "@payl/ui/styles.css";
+import "./workspace.css";
 
 export const metadata: Metadata = {
-  title: "PAYL Consumer Wallet",
-  description: "Consumer wallet, policy, and human authorization for PAYL sandbox payments",
+  title: "PAYL — Your personal workspace",
+  description: "Shop with AI, manage your PAYL wallet, and keep control of your purchases.",
 };
 
 export default function Layout({ children }: Readonly<{ children: React.ReactNode }>) {

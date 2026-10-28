@@ -75,6 +75,8 @@ services:
     envVars:
       - key: PAYL_API_URL
         value: https://payl-api-dev3nigerian.onrender.com
+      - key: MERCHANT_WEB_URL
+        value: https://payl-merchant-dev3nigerian.onrender.com
       - key: PAYL_PREFILL_DEMO_CREDENTIALS
         value: "false"
       - key: NEXT_TELEMETRY_DISABLED
@@ -92,6 +94,8 @@ services:
     envVars:
       - key: PAYL_API_URL
         value: https://payl-api-dev3nigerian.onrender.com
+      - key: APPROVAL_WEB_URL
+        value: https://payl-consumer-dev3nigerian.onrender.com
       - key: PAYL_PREFILL_DEMO_CREDENTIALS
         value: "false"
       - key: NEXT_TELEMETRY_DISABLED

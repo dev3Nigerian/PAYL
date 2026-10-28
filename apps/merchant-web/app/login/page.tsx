@@ -1,4 +1,5 @@
 import LoginForm from "./login-form";
+import { webUrls } from "@payl/ui/urls";
 
 export const dynamic = "force-dynamic";
 
@@ -9,5 +10,7 @@ export default function LoginPage() {
     demoEmail={prefilled ? process.env.SANDBOX_MERCHANT_EMAIL ?? "merchant@payl.local" : ""}
     demoPassword={prefilled ? process.env.SANDBOX_MERCHANT_PASSWORD ?? "MerchantDemo!2026" : ""}
     prefilled={prefilled}
+    homeUrl={webUrls().home}
+    consumerLogin={webUrls().consumerLogin}
   />;
 }
