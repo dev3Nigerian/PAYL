@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { loginUnavailable, requestLogin } from "@payl/ui/auth-server";
 
 const apiUrl = process.env.PAYL_API_URL ?? (process.env.NODE_ENV === "production" ? "https://payl-api-dev3nigerian.onrender.com" : "http://localhost:4100");
 
@@ -19,28 +20,24 @@ async function readApiBody(response: Response): Promise<ApiBody> {
 }
 
 function unavailableResponse(): NextResponse {
-  return NextResponse.json(
-    { error: { code: "API_UNAVAILABLE", message: "PAYL is waking up or temporarily unavailable. Please try again shortly." } },
-    { status: 503 },
-  );
+  const result = loginUnavailable();
+  return NextResponse.json(result.body, { status: result.status, headers: result.headers });
 }
 
 export async function POST(request: Request) {
   try {
     const input = await request.json() as { email?: string; password?: string; oauthHandoff?: boolean };
-    const upstream = await fetch(`${apiUrl}/api/auth/login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: input.email, password: input.password, role: "consumer" }),
-    });
-    const body = await readApiBody(upstream);
-    if (!upstream.ok || !body.sessionToken) return NextResponse.json(body, { status: upstream.ok ? 502 : upstream.status });
-    const { sessionToken, ...safeBody } = body;
+    const upstream = await requestLogin(apiUrl, { email: input.email, password: input.password, role: "consumer" });
+    if (!upstream.ok) return NextResponse.json(upstream.body, { status: upstream.status, headers: upstream.headers });
+    const { sessionToken, ...safeBody } = upstream.body;
     let handoffUrl: string | undefined;
     if (input.oauthHandoff) {
-      const handoff = await fetch(`${apiUrl}/api/auth/handoff`, {
+      const handoff = await fetch(new URL("/api/auth/handoff", apiUrl), {
         method: "POST",
         headers: { authorization: `Bearer ${sessionToken}` },
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(15_000),
       });
       const handoffBody = await readApiBody(handoff);
       if (!handoff.ok || !handoffBody.handoffUrl) {

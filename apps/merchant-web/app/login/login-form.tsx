@@ -34,6 +34,7 @@ export default function LoginForm({ demoEmail, demoPassword, prefilled, homeUrl,
     <label><span>Email address</span><input required aria-label="Email" type="email" autoComplete="username" placeholder="you@business.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
     <label><span>Password</span><input required aria-label="Password" type="password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
     {error && <p className="form-notice error" role="alert">{error}</p>}
+    {busy && <p className="fineprint" role="status">Connecting to PAYL. If the sandbox was asleep, this may take up to a minute.</p>}
     <button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in to your business"}<Icon name="arrow" size={16} /></button>
     <small>{prefilled ? "Sandbox credentials are prefilled for local testing." : "Use the credentials supplied by the sandbox owner."}</small>
     <a className="auth-link" href="/register">New to PAYL? Create a merchant account</a>

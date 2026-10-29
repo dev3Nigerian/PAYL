@@ -139,6 +139,12 @@ https://payl-api-dev3nigerian.onrender.com/mcp
 
 Use `.codex/config.hosted.example.toml` as the template. The consumer dashboard's **Connect AI** tab also provides a copyable setup and downloadable config. Keep the local `.codex/config.toml` when you still want local development. The first connection opens the hosted consumer login and OAuth consent flow. Because the dashboard and API use different HTTPS origins, PAYL exchanges a two-minute, single-use browser handoff and establishes the API-origin OAuth session without putting the dashboard session token in a URL. The older `/mcp/wallet` and `/mcp/commerce` endpoints remain available for compatibility.
 
+## Sign-in troubleshooting
+
+If sign-in reports `UPSTREAM_INVALID_RESPONSE`, the web service received a non-JSON response from its configured API. On both web services, `PAYL_API_URL` should be `https://payl-api-dev3nigerian.onrender.com`. Check the API's `/healthz` endpoint for `status: ok` and `database: ready`.
+
+Render's free services can serve a loading page while waking after inactivity. The login proxy retries transient startup responses up to three times, with a 15-second timeout per attempt. It returns a clear retryable `API_UNAVAILABLE` response if the API remains unavailable. Invalid credentials and rate limits are not automatically retried. If health checks stay unavailable, inspect the API service's deployment and database logs in Render. This login fix requires redeploying both web services and adds no environment keys.
+
 ## Operational boundaries
 
 - Seeded balances and PayPal Sandbox transfers use virtual funds; the integration does not move live money.
