@@ -1,3 +1,5 @@
+# Starter compute is $7/month per service ($21/month for these three instances).
+# Render also calls this tier 0.5c-512mb; the starter alias remains supported.
 previews:
   generation: off
 
@@ -5,7 +7,8 @@ services:
   - type: web
     name: payl-api-dev3nigerian
     runtime: docker
-    plan: free
+    plan: starter
+    numInstances: 1
     region: frankfurt
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
@@ -66,7 +69,8 @@ services:
   - type: web
     name: payl-consumer-dev3nigerian
     runtime: docker
-    plan: free
+    plan: starter
+    numInstances: 1
     region: frankfurt
     dockerfilePath: ./apps/approval-web/Dockerfile
     dockerContext: .
@@ -85,7 +89,8 @@ services:
   - type: web
     name: payl-merchant-dev3nigerian
     runtime: docker
-    plan: free
+    plan: starter
+    numInstances: 1
     region: frankfurt
     dockerfilePath: ./apps/merchant-web/Dockerfile
     dockerContext: .

@@ -61,7 +61,7 @@ The database is preloaded with $1,000 of simulated consumer funds. With PayPal S
 
 PAYL includes Docker images and a Render Blueprint for a three-service hosted sandbox backed by Neon PostgreSQL. The hosted profile requires HTTPS, a remote TLS database, rotated credentials, and a secret-derived signing hierarchy; the API fails closed if any of those requirements is missing.
 
-Follow [the Render and Neon deployment runbook](docs/deployment/render-neon.md). Free hosting is suitable only for intermittent demonstrations: Render sleeps idle services, so lifecycle processing and webhook retries are not always-on. The hosted profile remains simulated-funds-only and is not a live payment deployment.
+Follow [the Render and Neon deployment runbook](docs/deployment/render-neon.md). The Blueprint uses one paid Starter instance for each of the three web services ($7 each, $21/month base compute), so idle traffic does not put the dashboards or API lifecycle processing to sleep. Render credits apply through workspace billing. The hosted profile remains simulated-funds-only and is not a live payment deployment.
 
 Sandbox dashboard accounts:
 

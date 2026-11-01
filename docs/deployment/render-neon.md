@@ -11,9 +11,18 @@ This deployment is for product demonstrations with simulated funds. It is not ap
 
 The three Render services use the repository's root `render.yaml`. Each service builds from its own Dockerfile but retains the monorepo root as the Docker context.
 
-## Free-tier limitations
+## Render compute and credit budget
 
-Render free web services sleep after 15 minutes without inbound traffic. While the API sleeps, expiration processing and webhook retries pause; they resume when an incoming request wakes the API. Cold starts can take about a minute. The three services share the workspace's free instance-hour allowance. Do not treat this topology as an always-on environment.
+The Blueprint sets `plan: starter` and `numInstances: 1` on all three web services. Starter is the supported legacy name for Render's `0.5c-512mb` compute plan (0.5 CPU and 512 MB RAM). Paid web services do not spin down for inactivity, keeping both dashboards available and the API's lifecycle processing and webhook retries running between requests.
+
+| Service | Instances | Base compute per month |
+| --- | --- | --- |
+| API | 1 | $7 |
+| Consumer web | 1 | $7 |
+| Merchant web | 1 | $7 |
+| **Total** | **3** | **$21** |
+
+Prices were checked on 1 November 2026 against [Render pricing](https://render.com/pricing). With the full $50 credit available, this is approximately 2.4 months of base compute, before other billable usage and subject to the credits' expiry and terms. Keep the workspace on the free Hobby workspace plan; paid service compute does not require a paid workspace subscription. Credits apply in Render's workspace billing settings, not through an environment variable or a Blueprint field. Check the credit balance and expiry in Billing.
 
 Neon's free database scales to zero and is appropriate for a small, intermittent sandbox. Monitor its compute, storage, and network-transfer allowances.
 
@@ -69,6 +78,15 @@ Do not copy `PAYL_SIGNING_MASTER_KEY` into the repository. Changing it later inv
 5. Create the Blueprint and wait for all three services to deploy.
 
 The API applies migrations and provisions the initial simulated wallet, merchant, policies, and ledger exactly once. Changing bootstrap credentials in Render later does not update an existing database user. Use account-management functionality when it exists, or create a fresh sandbox database.
+
+### Upgrade an existing Blueprint
+
+1. Ensure the branch linked to the existing PAYL Blueprint contains this `render.yaml`. If the Blueprint tracks `main`, merge the change into `main` first.
+2. Open that Blueprint in Render. Auto Sync applies changes pushed to its linked branch; if Auto Sync is disabled, select **Manual Sync**.
+3. Review the update to the three existing services: one Starter (`0.5c-512mb`) instance each. Wait for the sync and deployments to complete.
+4. Confirm the compute plan on each service and run the health and sign-in checks below.
+
+Use the existing Blueprint so the upgrade applies to the existing services. This compute-only change needs no new environment variables, database migrations, or database reset. If the services were created individually and are not managed by a Blueprint, change each existing service's compute plan to Starter in Render, or follow Render's instructions for adding existing resources to a Blueprint.
 
 ## 5. Verify the deployment
 
@@ -143,20 +161,22 @@ Use `.codex/config.hosted.example.toml` as the template. The consumer dashboard'
 
 If sign-in reports `UPSTREAM_INVALID_RESPONSE`, the web service received a non-JSON response from its configured API. On both web services, `PAYL_API_URL` should be `https://payl-api-dev3nigerian.onrender.com`. Check the API's `/healthz` endpoint for `status: ok` and `database: ready`.
 
-Render's free services can serve a loading page while waking after inactivity. The login proxy retries transient startup responses up to three times, with a 15-second timeout per attempt. It returns a clear retryable `API_UNAVAILABLE` response if the API remains unavailable. Invalid credentials and rate limits are not automatically retried. If health checks stay unavailable, inspect the API service's deployment and database logs in Render. This login fix requires redeploying both web services and adds no environment keys.
+If an older deployment still uses free compute, Render can serve a loading page while waking after inactivity; sync the paid Blueprint to remove that idle sleep. Paid services can still restart or temporarily become unavailable. The login proxy retries transient startup responses up to three times, with a 15-second timeout per attempt. It returns a clear retryable `API_UNAVAILABLE` response if the API remains unavailable. Invalid credentials and rate limits are not automatically retried. If health checks stay unavailable, inspect the API service's deployment and database logs in Render. This login fix requires redeploying both web services and adds no environment keys.
 
 ## Operational boundaries
 
 - Seeded balances and PayPal Sandbox transfers use virtual funds; the integration does not move live money.
 - The signing hierarchy is derived from a Render-managed secret. It is suitable for a hosted sandbox only, not a real payment system.
-- Render can restart or sleep free services at any time.
-- Webhook retries are not timely while the API is asleep.
+- Paid compute removes idle sleep; deployments, restarts, or outages can still interrupt a service.
+- API lifecycle processing and webhook delivery resume after a restart; pending payouts are also reconciled on status requests.
 - Keep the repository private and never commit Render or Neon secrets.
-- Upgrade to an always-on service, managed secret/KMS signer, production IAM/MFA, backups, monitoring, and a licensed payment partner before handling real funds.
+- A live-funds deployment additionally needs a managed secret/KMS signer, production IAM/MFA, backups, monitoring, and a licensed payment partner.
 
 ## Official references
 
 - [Render free service limits](https://render.com/docs/free)
+- [Render pricing](https://render.com/pricing)
+- [Render compute plans](https://render.com/docs/compute-plans)
 - [Render Blueprints](https://render.com/docs/infrastructure-as-code)
 - [Render Docker deployment](https://render.com/docs/docker)
 - [Neon pricing](https://neon.com/pricing)
