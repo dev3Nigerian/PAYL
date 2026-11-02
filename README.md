@@ -6,7 +6,7 @@
 
 Antspace is the customer-facing name of the PAYL project. The existing `@payl/*` packages, `PAYL_*` environment keys, session cookies, signing identities, and API/webhook addresses retain their names for compatibility. The rebrand requires no database reset or migration. Existing signed terms and purchased files retain their original content.
 
-The public domains are being connected as `antspace.online` for the shared entry and shopper workspace and `merchants.antspace.online` for sellers. Follow the [domain connection guide](docs/deployment/antspace-domain.md) before switching public links. The existing Render addresses continue working throughout the transition.
+The public domains are `antspace.online` for the shared entry and shopper workspace and `merchants.antspace.online` for sellers. The Blueprint and production navigation use these domains. See the [domain connection guide](docs/deployment/antspace-domain.md) for DNS, environment settings, and verification. The original Render addresses remain available during DNS propagation.
 
 ## Product thesis
 
@@ -78,7 +78,7 @@ The consumer TOTP seed is `JBSWY3DPEHPK3PXP`. It is a public local-development s
 
 ## Using the dashboards
 
-Share one entry link: [Antspace home](https://payl-consumer-dev3nigerian.onrender.com/) (or `http://localhost:3000/` locally). The landing page offers **Shop with AI** and **Sell on Antspace**, with separate sign-up and sign-in links for each. The merchant site's root redirects to this same home page. Each workspace remains directly accessible at its own `/dashboard`, and the Antspace logo returns to the shared landing page.
+Share one entry link: [Antspace home](https://antspace.online/) (or `http://localhost:3000/` locally). The landing page offers **Shop with AI** and **Sell on Antspace**, with separate sign-up and sign-in links for each. The merchant site's root redirects to this same home page. Each workspace remains directly accessible at its own `/dashboard`, and the Antspace logo returns to the shared landing page.
 
 Signed-in shoppers and merchants skip their workspace's login and registration forms after the API verifies their session. Expired sessions leave sign-in available; consumer approval links and OAuth handoffs keep their existing return flow. Sessions stay on their respective web origins.
 

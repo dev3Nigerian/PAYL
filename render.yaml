@@ -30,9 +30,9 @@ services:
       - key: PAYL_ISSUER
         value: https://payl-api-dev3nigerian.onrender.com
       - key: APPROVAL_WEB_URL
-        value: https://payl-consumer-dev3nigerian.onrender.com
+        value: https://antspace.online
       - key: MERCHANT_WEB_URL
-        value: https://payl-merchant-dev3nigerian.onrender.com
+        value: https://merchants.antspace.online
       - key: SANDBOX_BOOTSTRAP_ENABLED
         value: "true"
       - key: SANDBOX_CONSUMER_EMAIL
@@ -82,7 +82,7 @@ services:
       - key: PAYL_API_URL
         value: https://payl-api-dev3nigerian.onrender.com
       - key: MERCHANT_WEB_URL
-        value: https://payl-merchant-dev3nigerian.onrender.com
+        value: https://merchants.antspace.online
       - key: PAYL_PUBLIC_WEB_URL
         value: https://antspace.online
       - key: PAYL_PREFILL_DEMO_CREDENTIALS
@@ -106,7 +106,7 @@ services:
       - key: PAYL_API_URL
         value: https://payl-api-dev3nigerian.onrender.com
       - key: APPROVAL_WEB_URL
-        value: https://payl-consumer-dev3nigerian.onrender.com
+        value: https://antspace.online
       - key: PAYL_PUBLIC_WEB_URL
         value: https://merchants.antspace.online
       - key: PAYL_PREFILL_DEMO_CREDENTIALS

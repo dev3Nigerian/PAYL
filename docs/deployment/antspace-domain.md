@@ -34,9 +34,9 @@ Return to both services' Custom Domains settings and choose **Verify**. Wait for
 
 Sources: [Render's Namecheap DNS guide](https://render.com/docs/configure-namecheap-dns) and [custom-domain verification](https://render.com/docs/custom-domains).
 
-## 3. Switch public navigation after both domains work
+## 3. Apply the canonical web URLs
 
-The rebrand Blueprint first adds the domains and browser-origin settings while retaining working Render links. After verification, update the following values in **both** `render.yaml` and the existing services' environment settings (or apply them by syncing the updated Blueprint):
+The Blueprint now contains the following canonical values. Sync the existing Blueprint from `codex/hosted-sandbox-deployment` to apply them to the three services. For manual service configuration, use the same values in Render's environment settings:
 
 | Service | Key | Value |
 | --- | --- | --- |
@@ -48,6 +48,8 @@ The rebrand Blueprint first adds the domains and browser-origin settings while r
 | Merchant web | `PAYL_PUBLIC_WEB_URL` | `https://merchants.antspace.online` |
 
 Redeploy all three services. Keep `PAYL_API_URL`, `PUBLIC_BASE_URL`, `PAYL_ISSUER`, `PAYPAL_SANDBOX_WEBHOOK_ID`, and the PayPal webhook destination unchanged. The API's public authorization URL must stay consistent with existing OAuth connections.
+
+After changing DNS, some resolvers may temporarily return the previous host even after the certificate shows issued. The authoritative Namecheap records and both the Google and Cloudflare public resolvers should return the values above. Allow cached answers to expire; verify HTTPS against the new Render destination before diagnosing application code. An old host redirecting the root to `www` can temporarily conflict with Render's `www`-to-root redirect while those cached answers remain.
 
 ## 4. Verify the switch
 

@@ -11,7 +11,7 @@ This deployment is for product demonstrations with simulated funds. It is not ap
 
 The three Render services use the repository's root `render.yaml`. Each service builds from its own Dockerfile but retains the monorepo root as the Docker context.
 
-For the Antspace rebrand, connect `antspace.online` and `merchants.antspace.online` to the existing web services using the [custom-domain rollout](antspace-domain.md). Keep the existing service names, API endpoint, secrets, and database. The Blueprint declares the web domains and their `PAYL_PUBLIC_WEB_URL` settings; cross-workspace links switch after DNS and certificates are verified.
+The Blueprint uses `antspace.online` and `merchants.antspace.online` for public navigation, approvals, and each frontend's `PAYL_PUBLIC_WEB_URL`. The [custom-domain guide](antspace-domain.md) documents DNS and certificate verification. Existing service names, API endpoints, secrets, and database remain compatible.
 
 ## Render compute and credit budget
 
@@ -34,8 +34,8 @@ The Blueprint reserves these public hostnames:
 
 ```text
 https://payl-api-dev3nigerian.onrender.com
-https://payl-consumer-dev3nigerian.onrender.com
-https://payl-merchant-dev3nigerian.onrender.com
+https://antspace.online
+https://merchants.antspace.online
 ```
 
 Render service names are globally unique. If any name is unavailable, edit the three `name` values and every matching `onrender.com` URL in `render.yaml` before creating the Blueprint.
@@ -96,11 +96,11 @@ The sample-catalog refresh requires an **API redeploy**. API startup applies `00
 
 After this deployment, check that the configured sandbox merchant has three new Atlas products. Ask the consumer chat for a portfolio template under $30, a weekly planner, or customer research downloads. Complete a small purchase and download its ZIP, then test a refund. The $59 and $69 products exercise the default approval limit. Existing orders and downloads must remain accessible. The [sample catalog in the README](../../README.md#sample-digital-marketplace) lists the full inventory and prices.
 
-Share `https://payl-consumer-dev3nigerian.onrender.com/` as the single public entry link. **Shop with AI** opens consumer registration with the $100 sandbox welcome credit; **Sell on Antspace** opens merchant registration. Returning users have a sign-in link for each role. The merchant site's bare root redirects to the same public landing page, and both dashboards remain at their own `/dashboard` routes. A verified existing session skips login/registration in that workspace. The landing page remains accessible from every Antspace logo.
+Share `https://antspace.online/` as the single public entry link. **Shop with AI** opens consumer registration with the $100 sandbox welcome credit; **Sell on Antspace** opens merchant registration. Returning users have a sign-in link for each role. The merchant site's bare root redirects to the same public landing page, and both dashboards remain at their own `/dashboard` routes. A verified existing session skips login/registration in that workspace. The landing page remains accessible from every Antspace logo.
 
 For the shared-entry update, redeploy **both web services**. No new environment variables or database migrations are needed. Existing `MERCHANT_WEB_URL` and `APPROVAL_WEB_URL` values control cross-workspace links; if using custom domains, set them to the corresponding web origins.
 
-Consumer self-registration is available at `https://payl-consumer-dev3nigerian.onrender.com/register`. Redeploy the API and consumer web service for this feature. API startup applies `0013_consumer_mfa_enrollment.sql`; it adds pending authenticator enrollment storage without changing existing accounts. No new environment variables or database reset are needed.
+Consumer self-registration is available at `https://antspace.online/register`. Redeploy the API and consumer web service for this feature. API startup applies `0013_consumer_mfa_enrollment.sql`; it adds pending authenticator enrollment storage without changing existing accounts. No new environment variables or database reset are needed.
 
 Register a new consumer and confirm the wallet shows $100 in virtual USD. Repeating registration with the same email must not create another account or credit. Under **Security**, add the setup key to a time-based authenticator and confirm its code before testing a purchase over the default $50 auto-approval limit. The signup grant is recorded separately as `sandbox_signup_credit` in the balanced ledger and is not a PayPal capture.
 
@@ -108,8 +108,8 @@ Open these URLs:
 
 ```text
 https://payl-api-dev3nigerian.onrender.com/healthz
-https://payl-consumer-dev3nigerian.onrender.com/login
-https://payl-merchant-dev3nigerian.onrender.com/login
+https://antspace.online/login
+https://merchants.antspace.online/login
 ```
 
 The health response must contain:
@@ -204,7 +204,7 @@ Redeploy both web services for the new UI. No new secrets or database migrations
 
 | Render service | Environment key | Value |
 | --- | --- | --- |
-| `payl-consumer-dev3nigerian` | `MERCHANT_WEB_URL` | `https://payl-merchant-dev3nigerian.onrender.com` |
-| `payl-merchant-dev3nigerian` | `APPROVAL_WEB_URL` | `https://payl-consumer-dev3nigerian.onrender.com` |
+| `payl-consumer-dev3nigerian` | `MERCHANT_WEB_URL` | `https://merchants.antspace.online` |
+| `payl-merchant-dev3nigerian` | `APPROVAL_WEB_URL` | `https://antspace.online` |
 
-These values control landing-page, sign-in, and workspace-switch links. They keep the existing entry points reachable until the custom domains are verified; follow the [Antspace domain guide](antspace-domain.md) to switch them. Local development defaults to ports 3000 and 3001. Keep `PAYL_API_URL` on the existing API address.
+These values control landing-page, sign-in, and workspace-switch links. Production defaults use the Antspace domains, and the API uses the same consumer origin for approval links and OAuth sign-in. Local development defaults to ports 3000 and 3001. Keep `PAYL_API_URL` on the existing API address. See the [Antspace domain guide](antspace-domain.md) for all service settings and rollback instructions.
