@@ -29,6 +29,7 @@ import {
 } from "@payl/crypto";
 import type { Config } from "./config.js";
 import { inTransaction } from "./db.js";
+import { postJournal } from "./ledger.js";
 import { DomainError, requireValue } from "./errors.js";
 import { ConsumerChatService } from "./chat.js";
 import { DeliveryService } from "./delivery.js";
@@ -36,7 +37,7 @@ import { HttpPayPalGateway, type PayPalCapture, type PayPalGateway, type PayPalP
 
 export const DIGITAL_GOODS_TERMS_V1 = "PAYL sandbox digital goods terms v1. Simulated funds only. No live payment or settlement occurs.";
 
-type JournalLine = { accountId: string; amountMinor: bigint };
+
 
 type OfferRow = {
   id: string;
@@ -280,7 +281,7 @@ export class PaylService {
         [this.config.sandboxMerchantId],
       );
 
-      await this.postJournal(client, {
+      await postJournal(client, {
         eventType: "sandbox_funding",
         idempotencyKey: `sandbox-funding:${this.config.sandboxConsumerId}`,
         referenceType: "consumer",
@@ -1092,7 +1093,7 @@ export class PaylService {
         `${ownerType} ${accountType} ledger account is missing`,
       );
 
-      await this.postJournal(client, {
+      await postJournal(client, {
         eventType: "payment_capture",
         idempotencyKey: `capture:${storedMandate.id}`,
         referenceType: "order",
@@ -1570,7 +1571,7 @@ export class PaylService {
         "TOPUP_ACCOUNT_MISSING", "Top-up ledger account is missing",
       );
       const amount = asBigInt(row.amount_minor);
-      await this.postJournal(client, {
+      await postJournal(client, {
         eventType: "paypal_wallet_topup",
         idempotencyKey: `paypal-topup:${capture.captureId}`,
         referenceType: "topup",
@@ -1581,7 +1582,7 @@ export class PaylService {
         ],
       });
       if (capture.feeMinor > 0n) {
-        await this.postJournal(client, {
+        await postJournal(client, {
           eventType: "paypal_topup_fee",
           idempotencyKey: `paypal-topup-fee:${capture.captureId}`,
           referenceType: "topup",
@@ -1662,7 +1663,7 @@ export class PaylService {
       const reserveHeld = (payable * BigInt(config.reserve_bps)) / 10_000n;
       const paid = payable - reserveHeld;
       const payoutId = newId("payout");
-      await this.postJournal(client, {
+      await postJournal(client, {
         eventType: "merchant_payout_pending",
         idempotencyKey: `payout-hold:${payoutId}`,
         referenceType: "payout",
@@ -1796,7 +1797,7 @@ export class PaylService {
       const amount = asBigInt(row.paid_amount_minor);
       const reserve = asBigInt(row.reserve_held_minor);
       if (paid && row.status === "pending") {
-        await this.postJournal(client, {
+        await postJournal(client, {
           eventType: "merchant_payout_paid", idempotencyKey: `payout-paid:${row.id}`,
           referenceType: "payout", referenceId: row.id,
           lines: [
@@ -1805,7 +1806,7 @@ export class PaylService {
           ],
         });
       } else if (failed) {
-        await this.postJournal(client, {
+        await postJournal(client, {
           eventType: row.status === "paid" ? "merchant_payout_returned" : "merchant_payout_failed",
           idempotencyKey: `payout-release:${row.id}`, referenceType: "payout", referenceId: row.id,
           lines: [
@@ -1817,7 +1818,7 @@ export class PaylService {
       }
       if (item && item.feeMinor > asBigInt(row.provider_fee_minor)) {
         const additional = item.feeMinor - asBigInt(row.provider_fee_minor);
-        await this.postJournal(client, {
+        await postJournal(client, {
           eventType: "paypal_payout_fee", idempotencyKey: `payout-fee:${row.id}:${item.feeMinor}`,
           referenceType: "payout", referenceId: row.id,
           lines: [
@@ -1947,7 +1948,7 @@ export class PaylService {
         "TOPUP_ACCOUNT_MISSING", "Consumer wallet is missing");
       const clearing = requireValue(accounts.rows.find((item) => item.owner_type === "platform")?.id,
         "TOPUP_ACCOUNT_MISSING", "PAYL clearing account is missing");
-      await this.postJournal(client, {
+      await postJournal(client, {
         eventType: "paypal_topup_reversal", idempotencyKey: `paypal-reversal:${eventId}`,
         referenceType: "topup", referenceId: row.id,
         lines: [
@@ -2215,7 +2216,7 @@ export class PaylService {
       );
       const amount = asBigInt(order.captured_amount_minor);
       const refundId = newId("refund");
-      await this.postJournal(client, {
+      await postJournal(client, {
         eventType: "payment_refund",
         idempotencyKey: `refund:${order.id}`,
         referenceType: "refund",
@@ -2230,7 +2231,7 @@ export class PaylService {
       const reserveBalance = await this.accountBalance(client, reserveId);
       const reserveRecovery = reserveBalance < amount ? reserveBalance : amount;
       if (reserveRecovery > 0n) {
-        await this.postJournal(client, {
+        await postJournal(client, {
           eventType: "merchant_reserve_recovery",
           idempotencyKey: `refund-reserve:${order.id}`,
           referenceType: "refund",
@@ -2659,7 +2660,7 @@ export class PaylService {
       `Merchant ${type} account is missing`,
     );
     const merchantNet = asBigInt(order.captured_amount_minor) - asBigInt(order.platform_fee_minor);
-    await this.postJournal(client, {
+    await postJournal(client, {
       eventType: "order_fulfillment",
       idempotencyKey: `fulfillment:${order.id}`,
       referenceType: "order",
@@ -2757,7 +2758,7 @@ export class PaylService {
     const fee = asBigInt(order.platform_fee_minor);
     const merchantNet = amount - fee;
     const cancellationId = newId("order_cancel");
-    await this.postJournal(client, {
+    await postJournal(client, {
       eventType: "order_cancellation",
       idempotencyKey: `order-cancel:${order.id}`,
       referenceType: "order_cancellation",
@@ -2815,7 +2816,7 @@ export class PaylService {
       `Consumer ${type} account is missing`,
     );
     const amount = asBigInt(payment.amount_minor);
-    await this.postJournal(client, {
+    await postJournal(client, {
       eventType: "payment_release",
       idempotencyKey: `release:${payment.id}`,
       referenceType: "payment",
@@ -2923,7 +2924,7 @@ export class PaylService {
     );
     if (available < input.amount) throw new DomainError("INSUFFICIENT_FUNDS", "Wallet has insufficient available sandbox funds");
 
-    await this.postJournal(client, {
+    await postJournal(client, {
       eventType: "payment_reservation",
       idempotencyKey: `reserve:${input.paymentId}`,
       referenceType: "payment",
@@ -3013,36 +3014,6 @@ export class PaylService {
       };
     }
     throw new DomainError("PAYMENT_NOT_PREPARABLE", `Existing payment is ${payment.status}`);
-  }
-
-  private async postJournal(
-    client: pg.PoolClient,
-    input: {
-      eventType: string;
-      idempotencyKey: string;
-      referenceType: string;
-      referenceId: string;
-      lines: JournalLine[];
-    },
-  ): Promise<string> {
-    if (input.lines.length < 2) throw new DomainError("INVALID_JOURNAL", "Journal entry needs at least two lines", 500);
-    const balance = input.lines.reduce((sum, line) => sum + line.amountMinor, 0n);
-    if (balance !== 0n) throw new DomainError("UNBALANCED_JOURNAL", "Journal entry must balance to zero", 500);
-    const existing = (await client.query<{ id: string }>("SELECT id FROM journal_entries WHERE idempotency_key = $1", [input.idempotencyKey])).rows[0];
-    if (existing) return existing.id;
-    const entryId = newId("journal");
-    await client.query(
-      `INSERT INTO journal_entries(id, event_type, idempotency_key, reference_type, reference_id)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [entryId, input.eventType, input.idempotencyKey, input.referenceType, input.referenceId],
-    );
-    for (const line of input.lines) {
-      await client.query(
-        "INSERT INTO journal_lines(entry_id, account_id, amount_minor) VALUES ($1, $2, $3)",
-        [entryId, line.accountId, line.amountMinor.toString()],
-      );
-    }
-    return entryId;
   }
 
   private async audit(

@@ -163,6 +163,12 @@ export function createApp(
 
   const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: "draft-8", legacyHeaders: false });
   const registrationLimiter = rateLimit({ windowMs: 60 * 60_000, limit: 10, standardHeaders: "draft-8", legacyHeaders: false });
+  app.post("/api/auth/register/consumer", registrationLimiter, async (request, response, next) => {
+    try {
+      const result = await identity.registerConsumer({ displayName: request.body?.displayName, email: request.body?.email, password: request.body?.password });
+      response.status(201).set("cache-control", "no-store").json({ ...result.session, welcomeCredit: result.welcomeCredit, sessionToken: result.token });
+    } catch (error) { next(error); }
+  });
   app.post("/api/auth/register/merchant", registrationLimiter, async (request, response, next) => {
     try {
       const result = await identity.registerMerchant({
@@ -248,6 +254,30 @@ export function createApp(
     } catch (error) {
       next(error);
     }
+  });
+  app.get("/api/consumer/mfa", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "consumer");
+      response.set("cache-control", "no-store").json(await identity.mfaStatus(session.userId));
+    } catch (error) { next(error); }
+  });
+  const enrollmentLimiter = rateLimit({
+    windowMs: 15 * 60_000, limit: 10, standardHeaders: "draft-8", legacyHeaders: false,
+    keyGenerator: (request) => {
+      const token = bearerToken(request.header("authorization")) ?? cookieValue(request.header("cookie"), "payl_consumer_session");
+      return token ? createHash("sha256").update(token).digest("hex") : ipKeyGenerator(request.ip ?? "unknown");
+    },
+    handler: (_request, response) => response.status(429).json({ error: { code: "MFA_RATE_LIMITED", message: "Too many setup attempts. Please try again in 15 minutes.", retryable: true } }),
+  });
+  app.post("/api/consumer/mfa", enrollmentLimiter, async (request, response, next) => {
+    try {
+      assertConsumerWriteOrigin(request, config);
+      const session = await requireWebSession(request, identity, "consumer");
+      response.set("cache-control", "no-store");
+      if (request.body?.action === "start") response.json(await identity.startMfaEnrollment(session.userId));
+      else if (request.body?.action === "confirm") response.json(await identity.confirmMfaEnrollment(session.userId, request.body?.mfaCode));
+      else throw new DomainError("INVALID_ACTION", "Choose start or confirm");
+    } catch (error) { next(error); }
   });
   app.post("/api/consumer/topups", async (request, response, next) => {
     try {

@@ -78,6 +78,7 @@
 .merchant-path .button-link { background: #d9ee9d; color: #234132; }
 .merchant-path .button-link:hover { background: #e5f5b8; }
 .register-link { display: block; width: fit-content; margin-top: 18px; color: #c3d5b7; font-size: 10px; text-underline-offset: 4px; }
+.shopper-path .register-link { color: #0b6b42; }
 .landing-control { display: flex; align-items: center; gap: 35px; padding-top: 25px; padding-bottom: 85px; }
 .control-mark { flex: 0 0 92px; height: 92px; display: grid; place-items: center; color: #698450; border: 1px solid #dce6cf; border-radius: 50%; background: #f0f5e9; }
 .landing-control h2 { font-size: 30px; }

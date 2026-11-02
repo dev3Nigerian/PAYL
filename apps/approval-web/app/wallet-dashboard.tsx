@@ -5,6 +5,7 @@ import { Icon, StatusBadge } from "@payl/ui";
 import { DashboardNavigation, useDashboardTab, type NavigationItem } from "@payl/ui/navigation";
 import ShopWithAi from "./shop-with-ai";
 import PayPalTopup, { type Topup } from "./paypal-topup";
+import MfaSetup from "./mfa-setup";
 
 export type Policy = {
   version: number;
@@ -424,6 +425,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
         </article></>}
 
         {tab === "security" && <section className="security-grid section-panel">
+          <MfaSetup />
           <article className="dashboard-panel security-card"><span className="security-icon">01</span><h2>Quote-bound</h2><p>An agent cannot change the merchant, items, or amount after the merchant signs the quote.</p></article>
           <article className="dashboard-panel security-card"><span className="security-icon">02</span><h2>Single-use</h2><p>Each mandate can fund exactly one matching order and expires automatically.</p></article>
           <article className="dashboard-panel security-card"><span className="security-icon">03</span><h2>No reusable credential</h2><p>MCP clients see scoped wallet tools, never an underlying card or bank credential.</p></article>

@@ -90,6 +90,10 @@ Use the existing Blueprint so the upgrade applies to the existing services. This
 
 ## 5. Verify the deployment
 
+Consumer self-registration is available at `https://payl-consumer-dev3nigerian.onrender.com/register`. Redeploy the API and consumer web service for this feature. API startup applies `0013_consumer_mfa_enrollment.sql`; it adds pending authenticator enrollment storage without changing existing accounts. No new environment variables or database reset are needed.
+
+Register a new consumer and confirm the wallet shows $100 in virtual USD. Repeating registration with the same email must not create another account or credit. Under **Security**, add the setup key to a time-based authenticator and confirm its code before testing a purchase over the default $50 auto-approval limit. The signup grant is recorded separately as `sandbox_signup_credit` in the balanced ledger and is not a PayPal capture.
+
 Open these URLs:
 
 ```text

@@ -74,6 +74,10 @@ The consumer TOTP seed is `JBSWY3DPEHPK3PXP`. It is a public local-development s
 
 ## Using the dashboards
 
+Consumers can create an account at `/register` on the consumer web app. Each new account receives exactly **$100 in virtual USD** once, signs in automatically, and gets its own wallet and spending policy. The welcome credit has no cash value and does not call PayPal. Existing accounts keep their balances; signing in or retrying registration does not grant another credit. The seeded demo account retains its existing $1,000 allocation.
+
+New consumers can set up their own time-based authenticator under **Security**. Add the displayed setup key to an authenticator app and verify its six-digit code. The default auto-approval limit is $50, with $500 per-transaction and $1,000 daily limits; purchases above the auto-approval limit require MFA. Existing enrolled accounts keep their authenticator. Merchant sign-up remains at `/register` on the merchant web app.
+
 The consumer dashboard has working navigation for wallet balance, activity, AI permissions, and security. Under **AI permissions**, the consumer can set:
 
 - the amount an AI may auto-approve;

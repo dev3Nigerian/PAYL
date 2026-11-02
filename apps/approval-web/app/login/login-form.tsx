@@ -46,7 +46,8 @@ export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefille
     {error && <p className="error" role="alert">{error}</p>}
     {busy && <p className="fineprint" role="status">Connecting to PAYL. If the sandbox was asleep, this may take up to a minute.</p>}
     <button className="primary-button login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in to PAYL"}<Icon name="arrow" size={16} /></button>
-    <p className="fineprint">{prefilled ? "Local sandbox credentials are prefilled." : "Use the credentials supplied by the sandbox owner."} Payment approval separately requires your six-digit authenticator code.</p>
+    <a className="auth-link" href="/register">New to PAYL? Sign up with $100 sandbox credit</a>
+    <p className="fineprint">{prefilled ? "Local sandbox credentials are prefilled." : "Sign in with the email and password you registered."} Set up your payment authenticator in Security for purchases that require approval.</p>
   </form></AuthShell>;
 }
 
