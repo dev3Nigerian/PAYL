@@ -37,7 +37,7 @@ export class DeliveryService {
       const targetId = offerTarget ? target.offerId : target.orderId;
       const table = offerTarget ? "offers" : "orders";
       const row = requireValue((await client.query<{ status?: string; fulfillment_method?: string }>(
-        `SELECT * FROM ${table} WHERE id = $1 AND merchant_id = $2 FOR UPDATE`, [targetId, merchantId],
+        `SELECT * FROM ${table} WHERE id = $1 AND merchant_id = $2 ${offerTarget ? "AND archived_at IS NULL" : ""} FOR UPDATE`, [targetId, merchantId],
       )).rows[0], "DELIVERY_TARGET_NOT_FOUND", "Product or order was not found");
       if (offerTarget && row.fulfillment_method !== "digital_download") {
         throw new DomainError("INVALID_DELIVERY_TARGET", "Attach service results to an individual order");
@@ -64,7 +64,7 @@ export class DeliveryService {
     const prompt = value.trim();
     if (prompt.length > 1000) throw new DomainError("INVALID_INTAKE_PROMPT", "Service requirements must be at most 1000 characters");
     const row = (await this.pool.query(
-      "UPDATE offers SET service_intake_prompt = $3 WHERE id = $1 AND merchant_id = $2 AND fulfillment_method = 'digital_service' RETURNING id",
+      "UPDATE offers SET service_intake_prompt = $3 WHERE id = $1 AND merchant_id = $2 AND archived_at IS NULL AND fulfillment_method = 'digital_service' RETURNING id",
       [offerId, merchantId, prompt || null],
     )).rows[0];
     requireValue(row, "OFFER_NOT_FOUND", "Service was not found");

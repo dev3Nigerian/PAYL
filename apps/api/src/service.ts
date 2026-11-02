@@ -33,6 +33,7 @@ import { postJournal } from "./ledger.js";
 import { DomainError, requireValue } from "./errors.js";
 import { ConsumerChatService } from "./chat.js";
 import { DeliveryService } from "./delivery.js";
+import { seedSampleCatalog } from "./sample-catalog.js";
 import { HttpPayPalGateway, type PayPalCapture, type PayPalGateway, type PayPalPayoutBatch } from "./paypal.js";
 
 export const DIGITAL_GOODS_TERMS_V1 = "PAYL sandbox digital goods terms v1. Simulated funds only. No live payment or settlement occurs.";
@@ -234,21 +235,6 @@ export class PaylService {
         [this.config.sandboxConsumerId],
       );
       await client.query(
-        `INSERT INTO offers(id, merchant_id, name, description, price_minor, currency, fulfillment_method, refundable, refund_window_minutes)
-         VALUES
-           ('offer_research_pack', $1, 'Market Research Pack', 'A fixed-scope digital research brief delivered immediately.', 7500, 'USD', 'digital_download', true, 10080),
-           ('offer_brand_review', $1, 'AI Brand Review', 'A deterministic ten-point brand review delivered as a PDF.', 12500, 'USD', 'digital_service', true, 10080)
-         ON CONFLICT (id) DO NOTHING`,
-        [this.config.sandboxMerchantId],
-      );
-      await client.query(
-        `INSERT INTO delivery_assets(id, merchant_id, file_name, content_type, contents)
-         VALUES ('asset_sandbox_research', $1, 'market-research-sample.txt', 'text/plain', $2)
-         ON CONFLICT (id) DO NOTHING`,
-        [this.config.sandboxMerchantId, Buffer.from("PAYL SANDBOX SAMPLE: Market research worksheet\n\nThis is a demonstration deliverable, not commissioned market research.\n\n1. Define your customer: role, location, buying trigger.\n2. List three alternatives and compare price, delivery time, and refunds.\n3. Interview five customers about their last purchase.\n4. Record evidence and source dates for every market claim.\n5. Test one offer with a fixed budget and measure completed purchases.\n\nDecision worksheet\nCustomer segment: __________\nProblem observed: __________\nEvidence and date: __________\nAlternatives: __________\nPrice hypothesis: __________\nNext experiment: __________\n")],
-      );
-      await client.query("UPDATE offers SET delivery_asset_id = 'asset_sandbox_research' WHERE id = 'offer_research_pack' AND merchant_id = $1 AND delivery_asset_id IS NULL", [this.config.sandboxMerchantId]);
-      await client.query(
         `INSERT INTO spending_policies(
            consumer_id, version, auto_approve_limit_minor, per_transaction_limit_minor, daily_limit_minor, currency
          ) VALUES ($1, 1, 5000, 50000, 100000, 'USD')
@@ -292,6 +278,10 @@ export class PaylService {
         ],
       });
     });
+  }
+
+  async seedSampleCatalog() {
+    return seedSampleCatalog(this.pool, this.config.sandboxMerchantId, (merchantId) => this.merchantKey(merchantId).kid);
   }
 
   async searchOffers(merchantId: string, query?: string): Promise<Array<Record<string, unknown>>> {
@@ -400,7 +390,7 @@ export class PaylService {
               o.price_minor::text, o.currency, o.fulfillment_method, o.refundable,
               o.refund_window_minutes, o.active, o.created_at, a.file_name AS delivery_file_name, o.service_intake_prompt
        FROM offers o JOIN merchants m ON m.id = o.merchant_id LEFT JOIN delivery_assets a ON a.id = o.delivery_asset_id
-       WHERE o.merchant_id = $1
+       WHERE o.merchant_id = $1 AND o.archived_at IS NULL
        ORDER BY o.created_at DESC, o.id`,
       [merchantId],
     );
@@ -513,7 +503,7 @@ export class PaylService {
        SET active = CASE WHEN $3::boolean IS NULL THEN active ELSE $3 END,
            refundable = CASE WHEN $4::boolean IS NULL THEN refundable ELSE $4 END,
            refund_window_minutes = CASE WHEN $4::boolean IS NULL THEN refund_window_minutes ELSE $5 END
-       WHERE id = $1 AND merchant_id = $2
+       WHERE id = $1 AND merchant_id = $2 AND archived_at IS NULL
        RETURNING id`,
       [
         input.offerId,

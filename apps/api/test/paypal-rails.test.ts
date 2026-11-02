@@ -3,6 +3,7 @@ import { loadConfig } from "../src/config.js";
 import { createPool } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { PaylService } from "../src/service.js";
+import { seedLegacyCatalogFixture } from "./legacy-catalog-fixture.js";
 import { FakePayPalGateway } from "./fake-paypal.js";
 
 const config = loadConfig({
@@ -41,6 +42,7 @@ beforeEach(async () => {
   paypal = new FakePayPalGateway();
   service = new PaylService(pool, config, paypal);
   await service.seedSandbox();
+  await seedLegacyCatalogFixture(pool, config.sandboxMerchantId);
 });
 afterAll(async () => { await pool.end(); });
 

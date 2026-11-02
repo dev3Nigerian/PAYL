@@ -5,6 +5,7 @@ import { loadConfig } from "../src/config.js";
 import { createPool } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { PaylService } from "../src/service.js";
+import { seedLegacyCatalogFixture } from "./legacy-catalog-fixture.js";
 import { IdentityService } from "../src/identity.js";
 import { PaylOAuthProvider } from "../src/oauth.js";
 import { createApp } from "../src/app.js";
@@ -53,6 +54,7 @@ beforeEach(async () => {
     payment_intents, quotes, journal_lines, journal_entries, ledger_accounts, spending_policies, offers, delivery_assets,
     consumers, merchants RESTART IDENTITY CASCADE`);
   await service.seedSandbox();
+  await seedLegacyCatalogFixture(pool, config.sandboxMerchantId);
   await identity.seedSandboxUsers();
   await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 200000, per_transaction_limit_minor = 200000, daily_limit_minor = 400000");
   token = (await identity.login(config.sandboxConsumerEmail, config.sandboxConsumerPassword, "consumer")).token;

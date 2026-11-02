@@ -18,6 +18,7 @@ const service = new PaylService(pool, config);
 const identity = new IdentityService(pool, config);
 if (config.sandboxBootstrapEnabled) {
   await service.seedSandbox();
+  logger.info(await service.seedSampleCatalog(), "Sandbox sample catalog checked");
   await identity.seedSandboxUsers();
 }
 const oauth = new PaylOAuthProvider(pool, config);

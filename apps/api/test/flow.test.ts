@@ -5,6 +5,7 @@ import { loadConfig } from "../src/config.js";
 import { createPool } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { PaylService } from "../src/service.js";
+import { seedLegacyCatalogFixture } from "./legacy-catalog-fixture.js";
 import { IdentityService } from "../src/identity.js";
 import { FakePayPalGateway } from "./fake-paypal.js";
 
@@ -46,6 +47,7 @@ beforeEach(async () => {
      RESTART IDENTITY CASCADE`,
   );
   await service.seedSandbox();
+  await seedLegacyCatalogFixture(pool, config.sandboxMerchantId);
   await identity.seedSandboxUsers();
 });
 

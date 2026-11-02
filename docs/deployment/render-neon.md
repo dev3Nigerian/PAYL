@@ -90,6 +90,10 @@ Use the existing Blueprint so the upgrade applies to the existing services. This
 
 ## 5. Verify the deployment
 
+The sample-catalog refresh requires an **API redeploy**. API startup applies `0014_sample_catalog.sql`, then installs 18 downloadable sample products across six merchants when `SANDBOX_BOOTSTRAP_ENABLED=true` (the existing Blueprint setting). No new environment keys or database reset are needed. The first run archives all previous listings while preserving their order references and delivery files. A durable catalog revision prevents future restarts from replacing products again. The API logs `Sandbox sample catalog checked` with `applied`, `version`, and, on first application, the product and merchant counts.
+
+After this deployment, check that the configured sandbox merchant has three new Atlas products. Ask the consumer chat for a portfolio template under $30, a weekly planner, or customer research downloads. Complete a small purchase and download its ZIP, then test a refund. The $59 and $69 products exercise the default approval limit. Existing orders and downloads must remain accessible. The [sample catalog in the README](../../README.md#sample-digital-marketplace) lists the full inventory and prices.
+
 Share `https://payl-consumer-dev3nigerian.onrender.com/` as the single public entry link. **Shop with AI** opens consumer registration with the $100 sandbox welcome credit; **Sell on PAYL** opens merchant registration. Returning users have a sign-in link for each role. The merchant site's bare root redirects to the same public landing page, and both dashboards remain at their own `/dashboard` routes. A verified existing session skips login/registration in that workspace. The landing page remains accessible from every PAYL logo.
 
 For the shared-entry update, redeploy **both web services**. No new environment variables or database migrations are needed. Existing `MERCHANT_WEB_URL` and `APPROVAL_WEB_URL` values control cross-workspace links; if using custom domains, set them to the corresponding web origins.

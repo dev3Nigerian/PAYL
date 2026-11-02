@@ -82,6 +82,23 @@ Consumers can create an account at `/register` on the consumer web app. Each new
 
 New consumers can set up their own time-based authenticator under **Security**. Add the displayed setup key to an authenticator app and verify its six-digit code. The default auto-approval limit is $50, with $500 per-transaction and $1,000 daily limits; purchases above the auto-approval limit require MFA. Existing enrolled accounts keep their authenticator. Merchant sign-up remains at `/register` on the merchant web app.
 
+### Sample digital marketplace
+
+The sandbox contains **18 original sample downloads across six merchants**, priced from **$9 to $69 in virtual USD**. Every product includes a ZIP of usable sample files and a README, delivers immediately after an authorized purchase, and has a seven-day refund window.
+
+| Sample merchant | Products and virtual USD prices |
+| --- | --- |
+| Atlas Digital Market | Customer Interview Workbook $19; Freelancer Proposal Kit $29; Startup Launch Playbook $69 |
+| Pixel & Pine Studio | Minimal Portfolio Template $24; Sage Brand Starter Kit $39; Social Post Layout Pack $15 |
+| Code Harbor | Responsive Pricing Page $32; JavaScript Utilities Pack $22; API Integration Checklist $12 |
+| Papertrail Productivity | Weekly Focus Planner $9; Freelance Project Tracker $18; Content Calendar Toolkit $27 |
+| Brightside Growth | Product Launch Email Kit $21; SEO Content Brief Kit $25; Customer Research Sprint $59 |
+| Storyloom Press | Short Story Starter Workbook $14; Newsletter Writing Kit $17; Creator Storytelling Mini-Course $45 |
+
+Try asking the shopping chat **“Find a portfolio template under $30”**, **“Compare customer research downloads under $80”**, or **“Buy the Weekly Focus Planner.”** Products above $50 exercise the default separate approval flow. The templates contain original editable HTML/CSS/SVG, JavaScript, Markdown, and CSV files; they do not include external subscriptions, accounts, or live services.
+
+On the first startup with catalog version `digital-marketplace-2026-11-v1`, the existing listings are archived and replaced. Historical orders, signed quotes, downloads, refunds, accounts, and balances remain intact. The revision is applied once in a transaction, including under concurrent startups; restarts preserve later product additions and edits. The configured sandbox merchant retains its existing login, name, balances, and settlement settings and receives the Atlas products. The other five merchants are fictional catalog sellers with instant delivery and no shared public login credentials.
+
 The consumer dashboard has working navigation for wallet balance, activity, AI permissions, and security. Under **AI permissions**, the consumer can set:
 
 - the amount an AI may auto-approve;
