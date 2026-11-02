@@ -1,4 +1,4 @@
-# Host the PAYL sandbox on Render and Neon
+# Host the Antspace sandbox on Render and Neon
 
 This deployment is for product demonstrations with simulated funds. It is not approved for live payments, custody, bank credentials, card data, production identity verification, or merchant settlement.
 
@@ -10,6 +10,8 @@ This deployment is for product demonstrations with simulated funds. It is not ap
 - Neon: persistent PostgreSQL database using its pooled TLS connection.
 
 The three Render services use the repository's root `render.yaml`. Each service builds from its own Dockerfile but retains the monorepo root as the Docker context.
+
+For the Antspace rebrand, connect `antspace.online` and `merchants.antspace.online` to the existing web services using the [custom-domain rollout](antspace-domain.md). Keep the existing service names, API endpoint, secrets, and database. The Blueprint declares the web domains and their `PAYL_PUBLIC_WEB_URL` settings; cross-workspace links switch after DNS and certificates are verified.
 
 ## Render compute and credit budget
 
@@ -63,7 +65,7 @@ Do not copy `PAYL_SIGNING_MASTER_KEY` into the repository. Changing it later inv
 ## 4. Create the Render Blueprint
 
 1. Sign in to Render and connect the GitHub account that can read the private `dev3Nigerian/PAYL` repository.
-2. Choose **New → Blueprint** and select the PAYL repository.
+2. Choose **New → Blueprint** and select the Antspace repository.
 3. Keep `render.yaml` as the Blueprint path.
 4. Enter the prompted `sync: false` values:
 
@@ -81,7 +83,7 @@ The API applies migrations and provisions the initial simulated wallet, merchant
 
 ### Upgrade an existing Blueprint
 
-1. Ensure the branch linked to the existing PAYL Blueprint contains this `render.yaml`. If the Blueprint tracks `main`, merge the change into `main` first.
+1. Ensure the branch linked to the existing Antspace Blueprint contains this `render.yaml`. If the Blueprint tracks `main`, merge the change into `main` first.
 2. Open that Blueprint in Render. Auto Sync applies changes pushed to its linked branch; if Auto Sync is disabled, select **Manual Sync**.
 3. Review the update to the three existing services: one Starter (`0.5c-512mb`) instance each. Wait for the sync and deployments to complete.
 4. Confirm the compute plan on each service and run the health and sign-in checks below.
@@ -94,7 +96,7 @@ The sample-catalog refresh requires an **API redeploy**. API startup applies `00
 
 After this deployment, check that the configured sandbox merchant has three new Atlas products. Ask the consumer chat for a portfolio template under $30, a weekly planner, or customer research downloads. Complete a small purchase and download its ZIP, then test a refund. The $59 and $69 products exercise the default approval limit. Existing orders and downloads must remain accessible. The [sample catalog in the README](../../README.md#sample-digital-marketplace) lists the full inventory and prices.
 
-Share `https://payl-consumer-dev3nigerian.onrender.com/` as the single public entry link. **Shop with AI** opens consumer registration with the $100 sandbox welcome credit; **Sell on PAYL** opens merchant registration. Returning users have a sign-in link for each role. The merchant site's bare root redirects to the same public landing page, and both dashboards remain at their own `/dashboard` routes. A verified existing session skips login/registration in that workspace. The landing page remains accessible from every PAYL logo.
+Share `https://payl-consumer-dev3nigerian.onrender.com/` as the single public entry link. **Shop with AI** opens consumer registration with the $100 sandbox welcome credit; **Sell on Antspace** opens merchant registration. Returning users have a sign-in link for each role. The merchant site's bare root redirects to the same public landing page, and both dashboards remain at their own `/dashboard` routes. A verified existing session skips login/registration in that workspace. The landing page remains accessible from every Antspace logo.
 
 For the shared-entry update, redeploy **both web services**. No new environment variables or database migrations are needed. Existing `MERCHANT_WEB_URL` and `APPROVAL_WEB_URL` values control cross-workspace links; if using custom domains, set them to the corresponding web origins.
 
@@ -148,14 +150,14 @@ The local automated suite uses model responses and payment fixtures. Run a real 
 
 ### Enable PayPal Sandbox funding and withdrawals
 
-1. In the [PayPal Developer Dashboard](https://developer.paypal.com/dashboard/), create or select a Sandbox business account for PAYL, a Sandbox personal buyer, and a Sandbox merchant recipient. Enable Payouts for the PAYL REST app. The business account needs enough Sandbox balance for payouts.
+1. In the [PayPal Developer Dashboard](https://developer.paypal.com/dashboard/), create or select a Sandbox business account for Antspace, a Sandbox personal buyer, and a Sandbox merchant recipient. Enable Payouts for the Antspace REST app. The business account needs enough Sandbox balance for payouts.
 2. Configure an app webhook at `https://payl-api-dev3nigerian.onrender.com/api/paypal/webhook`. Subscribe to `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.REFUNDED`, `PAYMENT.CAPTURE.REVERSED`, `PAYMENT.PAYOUTSBATCH.*`, and `PAYMENT.PAYOUTS-ITEM.*` events that PayPal offers for the app. Record its webhook ID.
 3. On the **API service only**, set `PAYPAL_SANDBOX_CLIENT_ID`, `PAYPAL_SANDBOX_CLIENT_SECRET`, `PAYPAL_SANDBOX_MERCHANT_ID` (the business account's merchant ID), and `PAYPAL_SANDBOX_WEBHOOK_ID`. Set all four together, then redeploy. The browser receives only the public client ID from the signed-in consumer dashboard.
-4. Sign in as the consumer and use **Wallet → Add funds to PAYL** with the Sandbox buyer. A completed capture credits the full amount once; PAYL records the PayPal fee separately. Use a different Sandbox account from the PAYL business account for buyer approval.
-5. Sign in as the merchant and use **Settlement → Withdrawal account** to save and confirm the recipient's PayPal email. Withdraw the full payable amount. PAYL keeps 10% in reserve and holds the rest as pending until PayPal confirms the item. The dashboard status action and lifecycle worker reconcile delayed payouts.
-6. Test a PAYL AI purchase separately. The agent's quote, policy approval, mandate, and ledger capture remain the purchase authority; PayPal is used only when funds enter or leave PAYL.
+4. Sign in as the consumer and use **Wallet → Add funds to Antspace** with the Sandbox buyer. A completed capture credits the full amount once; Antspace records the PayPal fee separately. Use a different Sandbox account from the Antspace business account for buyer approval.
+5. Sign in as the merchant and use **Settlement → Withdrawal account** to save and confirm the recipient's PayPal email. Withdraw the full payable amount. Antspace keeps 10% in reserve and holds the rest as pending until PayPal confirms the item. The dashboard status action and lifecycle worker reconcile delayed payouts.
+6. Test an Antspace AI purchase separately. The agent's quote, policy approval, mandate, and ledger capture remain the purchase authority; PayPal is used only when funds enter or leave Antspace.
 
-The consumer and merchant web services validate browser write requests against Render's `RENDER_EXTERNAL_URL`. No additional origin variable is needed for the `onrender.com` URLs above. If either web service uses a custom domain, set `PAYL_PUBLIC_WEB_URL` on that web service to its own public HTTPS URL and redeploy it.
+The consumer and merchant web services validate browser write requests against their own `PAYL_PUBLIC_WEB_URL` and Render's `RENDER_EXTERNAL_URL`. Both explicitly configured origins work during domain migration; unrelated origins and sibling workspaces are rejected. Set `PAYL_PUBLIC_WEB_URL` to `https://antspace.online` on consumer-web and `https://merchants.antspace.online` on merchant-web. The Blueprint includes these values. Redeploy both web services before testing browser writes on the new domains.
 
 These are virtual Sandbox transfers. A live launch requires platform approval, country and Payouts eligibility, custody and safeguarding design, and production credentials. The current [PayPal Payouts country table](https://developer.paypal.com/payouts/supported-features/) does not list Nigeria.
 
@@ -167,7 +169,7 @@ The hosted consumer MCP URL is:
 https://payl-api-dev3nigerian.onrender.com/mcp
 ```
 
-Use `.codex/config.hosted.example.toml` as the template. The consumer dashboard's **Connect AI** tab also provides a copyable setup and downloadable config. Keep the local `.codex/config.toml` when you still want local development. The first connection opens the hosted consumer login and OAuth consent flow. Because the dashboard and API use different HTTPS origins, PAYL exchanges a two-minute, single-use browser handoff and establishes the API-origin OAuth session without putting the dashboard session token in a URL. The older `/mcp/wallet` and `/mcp/commerce` endpoints remain available for compatibility.
+Use `.codex/config.hosted.example.toml` as the template. The consumer dashboard's **Connect AI** tab also provides a copyable setup and downloadable config. Keep the local `.codex/config.toml` when you still want local development. The first connection opens the hosted consumer login and OAuth consent flow. Because the dashboard and API use different HTTPS origins, Antspace exchanges a two-minute, single-use browser handoff and establishes the API-origin OAuth session without putting the dashboard session token in a URL. The older `/mcp/wallet` and `/mcp/commerce` endpoints remain available for compatibility.
 
 ## Sign-in troubleshooting
 
@@ -196,7 +198,7 @@ If an older deployment still uses free compute, Render can serve a loading page 
 
 ### Landing page and workspace links
 
-The consumer web service now serves the public PAYL landing page at `/` and the authenticated shopper workspace at `/dashboard`. The merchant workspace is at `/dashboard` on the merchant web service; its existing `/` address redirects there. Existing approval and OAuth callback URLs remain valid.
+The consumer web service serves the public Antspace landing page at `/` and the authenticated shopper workspace at `/dashboard`. The merchant workspace is at `/dashboard` on the merchant web service; its `/` address redirects to the shared landing page. Existing approval and OAuth callback URLs remain valid.
 
 Redeploy both web services for the new UI. No new secrets or database migrations are needed for the frontend redesign. The Blueprint includes these public, server-side URL settings:
 
@@ -205,4 +207,4 @@ Redeploy both web services for the new UI. No new secrets or database migrations
 | `payl-consumer-dev3nigerian` | `MERCHANT_WEB_URL` | `https://payl-merchant-dev3nigerian.onrender.com` |
 | `payl-merchant-dev3nigerian` | `APPROVAL_WEB_URL` | `https://payl-consumer-dev3nigerian.onrender.com` |
 
-These values control landing-page, sign-in, and workspace-switch links. Production defaults use the addresses above; set the keys explicitly if you use custom domains. Local development defaults to ports 3000 and 3001. Keep `PAYL_API_URL` and the existing origin-validation settings unchanged.
+These values control landing-page, sign-in, and workspace-switch links. They keep the existing entry points reachable until the custom domains are verified; follow the [Antspace domain guide](antspace-domain.md) to switch them. Local development defaults to ports 3000 and 3001. Keep `PAYL_API_URL` on the existing API address.

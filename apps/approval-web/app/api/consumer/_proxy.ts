@@ -41,6 +41,6 @@ export async function forwardConsumerRequest(path: string, request: Request): Pr
     const body = await upstream.json() as unknown;
     return NextResponse.json(body, { status: upstream.status });
   } catch {
-    return NextResponse.json({ error: { message: "PAYL is temporarily unavailable. Please try again." } }, { status: 503 });
+    return NextResponse.json({ error: { message: "Antspace is temporarily unavailable. Please try again." } }, { status: 503 });
   }
 }

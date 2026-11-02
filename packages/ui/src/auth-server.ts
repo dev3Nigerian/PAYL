@@ -40,7 +40,7 @@ function failure(status: number, code: string, message: string, retryable: boole
 }
 
 export function loginUnavailable(): LoginFailure {
-  return failure(503, "API_UNAVAILABLE", "PAYL is waking up or temporarily unavailable. Wait a moment, then try signing in again.", true, "15");
+  return failure(503, "API_UNAVAILABLE", "Antspace is waking up or temporarily unavailable. Wait a moment, then try signing in again.", true, "15");
 }
 
 export async function requestLogin(apiUrl: string, input: { email: unknown; password: unknown; role: "consumer" | "merchant_admin" }): Promise<LoginResult> {
@@ -74,7 +74,7 @@ export async function requestLogin(apiUrl: string, input: { email: unknown; pass
       // Render can return an HTML startup/error page even with a 200 status.
       // Retry only transient provider failures, never rejected credentials.
       if (TRANSIENT_STATUSES.has(response.status) || (response.ok && !isObject(body))) {
-        console.warn("PAYL login upstream unavailable", { attempt: attempt + 1, status: response.status, contentType: response.headers.get("content-type")?.split(";", 1)[0] ?? "unknown" });
+        console.warn("Antspace login upstream unavailable", { attempt: attempt + 1, status: response.status, contentType: response.headers.get("content-type")?.split(";", 1)[0] ?? "unknown" });
       } else if (!response.ok) {
         if (isObject(body) && isObject(body.error)) {
           return failure(response.status, typeof body.error.code === "string" ? body.error.code : "SIGN_IN_FAILED", typeof body.error.message === "string" ? body.error.message : "Sign-in failed. Please try again.", body.error.retryable === true);
@@ -87,7 +87,7 @@ export async function requestLogin(apiUrl: string, input: { email: unknown; pass
       }
     } catch {
       // Do not log credentials, response bodies, or provider error text.
-      console.warn("PAYL login upstream unavailable", { attempt: attempt + 1, status: "network_error" });
+      console.warn("Antspace login upstream unavailable", { attempt: attempt + 1, status: "network_error" });
     }
     if (attempt + 1 < MAX_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, 1000));
   }

@@ -29,6 +29,6 @@ export async function POST(request: Request) {
     response.cookies.set("payl_consumer_session", body.sessionToken, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 12 * 60 * 60 });
     return response;
   } catch {
-    return failure(503, "PAYL could not confirm account setup. Try signing in first; if the account was not created, return here and try again.");
+    return failure(503, "Antspace could not confirm account setup. Try signing in first; if the account was not created, return here and try again.");
   }
 }

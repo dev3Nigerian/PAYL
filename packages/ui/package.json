@@ -8,6 +8,7 @@
     "./navigation": "./src/navigation.tsx",
     "./urls": "./src/urls.ts",
     "./auth-server": "./src/auth-server.ts",
+    "./origin": "./src/origin.ts",
     "./styles.css": "./src/styles.css"
   },
   "peerDependencies": { "react": "19.2.7" },

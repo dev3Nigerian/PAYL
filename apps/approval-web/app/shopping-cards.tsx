@@ -72,13 +72,13 @@ export function ShoppingDetails({ details, disabled, onMessage, onDetails }: {
   details: ChatDetails | undefined; disabled: boolean; onMessage: (prompt: string) => void; onDetails: (orderId: string, details: string) => Promise<void>;
 }) {
   return <>
-    {details?.wallet && <article className="chat-wallet-card"><strong>Your PAYL wallet</strong>
+    {details?.wallet && <article className="chat-wallet-card"><strong>Your Antspace wallet</strong>
       <dl><div><dt>Available</dt><dd>{money(details.wallet.balances?.available, details.wallet.currency)}</dd></div>
       <div><dt>Reserved</dt><dd>{money(details.wallet.balances?.reserved, details.wallet.currency)}</dd></div>
       {details.policy && <><div><dt>Automatic approval up to</dt><dd>{money(details.policy.autoApproveLimitMinor)}</dd></div>
       <div><dt>Per purchase limit</dt><dd>{money(details.policy.perTransactionLimitMinor)}</dd></div>
       <div><dt>Daily policy limit</dt><dd>{money(details.policy.dailyLimitMinor)}</dd></div></>}</dl>
-      <small>Balance when checked. PAYL checks your available funds and limits again before payment.</small>
+      <small>Balance when checked. Antspace checks your available funds and limits again before payment.</small>
     </article>}
     {details?.orders?.map((order) => <OrderCard key={order.orderId} order={order} disabled={disabled} onMessage={onMessage} onDetails={onDetails} />)}
   </>;

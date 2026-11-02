@@ -1,4 +1,4 @@
-name: PAYL CI
+name: Antspace CI
 
 on:
   push:

@@ -33,13 +33,13 @@ export default function RegisterForm({ merchantLogin }: { merchantLogin: string 
     {created ? <section className="card login-card signup-success" aria-labelledby="welcome-heading">
       <span className="signup-symbol"><Icon name="check" size={26} /></span>
       <p className="eyebrow">You’re signed in</p><h1 id="welcome-heading">Your first $100 is ready.</h1>
-      <p className="muted">Your wallet has been credited with $100 in virtual USD. Try your first sandbox purchase with PAYL AI.</p>
+      <p className="muted">Your wallet has been credited with $100 in virtual USD. Try your first sandbox purchase with Antspace AI.</p>
       <a className="primary-button login-button" href="/dashboard">Start shopping <Icon name="arrow" size={16} /></a>
       <a className="auth-link" href="/dashboard#security">Set up my payment authenticator</a>
       <p className="fineprint">Your default auto-approval limit is $50. Larger purchases require an authenticator code. This welcome credit is for sandbox use and has no cash value.</p>
     </section> : <form className="card login-card signup-card" onSubmit={submit} aria-busy={busy}>
       <p className="eyebrow">Your first find starts here</p><h1>Create your account.</h1>
-      <p className="muted">Meet your AI shopping companion. Sign up and get $100 to explore the PAYL sandbox.</p>
+      <p className="muted">Meet your AI shopping companion. Sign up and get $100 to explore the Antspace sandbox.</p>
       <div className="signup-credit"><Icon name="wallet" size={24} /><div><strong>$100 welcome credit</strong><span>Virtual USD · One-time credit per new account</span></div></div>
       <label className="login-field"><span>Your name</span><input required minLength={2} maxLength={120} autoComplete="name" placeholder="Your name" value={form.displayName} disabled={busy} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
       <label className="login-field"><span>Email address</span><input required type="email" maxLength={254} autoComplete="email" placeholder="you@example.com" value={form.email} disabled={busy} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>

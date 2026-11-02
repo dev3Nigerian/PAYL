@@ -10,12 +10,10 @@ input, textarea, select { color: var(--ink); }
 ::selection { color: var(--ink); background: var(--lime); }
 h1, h2, h3 { text-wrap: balance; }
 .payl-icon { flex-shrink: 0; vertical-align: middle; }
-.payl-brand { display: inline-flex; align-items: center; gap: 8px; width: fit-content; color: var(--ink); text-decoration: none; font-size: 32px; font-weight: 800; letter-spacing: -1.8px; line-height: 1; }
-.payl-brand-mark { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 12px 12px 12px 3px; background: var(--green); color: var(--lime); }
-.brand-period { margin-left: -7px; color: #6e8e45; }
+.payl-brand { display: inline-flex; align-items: center; gap: 9px; width: fit-content; flex-shrink: 0; color: var(--ink); text-decoration: none; font-size: 29px; font-weight: 750; letter-spacing: -1.2px; line-height: 1; }
+.payl-brand-mark { display: grid; place-items: center; flex-shrink: 0; width: 35px; height: 35px; border-radius: 12px; background: var(--green); color: var(--lime); }
 .payl-brand.light { color: #fff; }
 .payl-brand.light .payl-brand-mark { background: var(--lime); color: var(--green); }
-.payl-brand.light .brand-period { color: var(--lime); }
 .primary-button, .secondary-button, .button-link { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; border-radius: 10px; padding: 12px 18px; font-size: 13px; font-weight: 650; text-decoration: none; transition: background .16s ease, box-shadow .16s ease; cursor: pointer; }
 .primary-button, .button-link { border: 1px solid transparent; color: white; background: var(--green); }
 .primary-button:hover:not(:disabled), .button-link:hover { background: #163d2d; box-shadow: 0 3px 9px #172c2514; }
@@ -108,7 +106,7 @@ h1, h2, h3 { text-wrap: balance; }
 .loading-dot { width: 28px; height: 28px; margin: auto; border: 3px solid var(--line); border-top-color: var(--green); border-radius: 50%; animation: payl-spin 1s linear infinite; }
 @keyframes payl-spin { to { transform: rotate(360deg); } }
 @media (min-width: 1700px) { .dashboard-content, .merchant-shell > .content { padding-top: 45px; } }
-@media (max-width: 1100px) { .dashboard-shell, .merchant-shell { grid-template-columns: 210px minmax(0, 1fr); } .app-sidebar { padding-inline: 12px; } .dashboard-content, .merchant-shell > .content { padding-inline: 26px; } .header-actions .health-badge, .header-actions .status { display: none; } }
+@media (max-width: 1100px) { .dashboard-shell, .merchant-shell { grid-template-columns: 210px minmax(0, 1fr); } .app-sidebar { padding-inline: 12px; } .sidebar-brand .payl-brand { font-size: 25px; } .dashboard-content, .merchant-shell > .content { padding-inline: 26px; } .header-actions .health-badge, .header-actions .status { display: none; } }
 @media (max-width: 800px) {
   .dashboard-shell, .merchant-shell { display: block; }
   .app-sidebar { display: none; }
@@ -131,5 +129,5 @@ h1, h2, h3 { text-wrap: balance; }
   .access-form-wrap { padding: 42px 0; }
   .offline-banner { align-items: flex-start; flex-wrap: wrap; }
 }
-@media (max-width: 440px) { .header-actions { width: 100%; justify-content: space-between; } .header-balance { text-align: left; } .mobile-switch { max-width: 93px; } .mobile-app-bar { padding-inline: 16px; gap: 8px; } }
+@media (max-width: 440px) { .header-actions { width: 100%; justify-content: space-between; } .header-balance { text-align: left; } .mobile-switch { max-width: 80px; margin-left: auto; } .mobile-app-bar { padding-inline: 16px; gap: 8px; } .mobile-app-bar > span { display: none; } .mobile-app-bar .payl-brand { font-size: 24px; } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }

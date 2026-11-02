@@ -4,8 +4,9 @@ import "@payl/ui/styles.css";
 import "./workspace.css";
 
 export const metadata: Metadata = {
-  title: "PAYL — Your personal workspace",
-  description: "Shop with AI, manage your PAYL wallet, and keep control of your purchases.",
+  applicationName: "Antspace",
+  title: "Antspace — Your personal workspace",
+  description: "Shop with AI, manage your Antspace wallet, and keep control of your purchases.",
 };
 
 export default function Layout({ children }: Readonly<{ children: React.ReactNode }>) {

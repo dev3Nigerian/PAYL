@@ -34,8 +34,8 @@ footer { padding:54px 0 24px; font-size:14px; }
 function page(title: string, body: string) {
   return `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Editable PAYL sandbox sample template."><title>${title}</title><link rel="stylesheet" href="styles.css"></head>
-<body>${body}<footer>Original PAYL sandbox sample. Replace placeholder names, offers, and contact details before publishing.</footer></body></html>`;
+<meta name="description" content="Editable Antspace sandbox sample template."><title>${title}</title><link rel="stylesheet" href="styles.css"></head>
+<body>${body}<footer>Original Antspace sandbox sample. Replace placeholder names, offers, and contact details before publishing.</footer></body></html>`;
 }
 
 function socialLayout(title: string, subtitle: string, background: string, foreground: string) {

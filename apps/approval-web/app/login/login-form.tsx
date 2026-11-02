@@ -40,24 +40,24 @@ export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefille
 
   return <AuthShell role="consumer" homeHref="/" switchHref={merchantLogin}><form className="card login-card" onSubmit={submit} aria-busy={busy}>
     <p className="eyebrow">Your personal workspace</p><h1>Welcome back.</h1>
-    <p className="muted">A good find is waiting. Sign in to shop with AI and manage your PAYL wallet.</p>
+    <p className="muted">A good find is waiting. Sign in to shop with AI and manage your Antspace wallet.</p>
     <label className="login-field"><span>Email address</span><input required aria-label="Email" type="email" autoComplete="username" placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
     <label className="login-field"><span>Password</span><input required aria-label="Password" type="password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
     {error && <p className="error" role="alert">{error}</p>}
-    {busy && <p className="fineprint" role="status">Connecting to PAYL. If the sandbox was asleep, this may take up to a minute.</p>}
-    <button className="primary-button login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in to PAYL"}<Icon name="arrow" size={16} /></button>
-    <a className="auth-link" href="/register">New to PAYL? Sign up with $100 sandbox credit</a>
+    {busy && <p className="fineprint" role="status">Connecting to Antspace. If the sandbox was asleep, this may take up to a minute.</p>}
+    <button className="primary-button login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in to Antspace"}<Icon name="arrow" size={16} /></button>
+    <a className="auth-link" href="/register">New to Antspace? Sign up with $100 sandbox credit</a>
     <p className="fineprint">{prefilled ? "Local sandbox credentials are prefilled." : "Sign in with the email and password you registered."} Set up your payment authenticator in Security for purchases that require approval.</p>
   </form></AuthShell>;
 }
 
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
-  if (!text.trim()) return { error: { message: `PAYL did not return a response (${response.status})` } };
+  if (!text.trim()) return { error: { message: `Antspace did not return a response (${response.status})` } };
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    return { error: { message: "PAYL returned an invalid response. Please try again shortly." } };
+    return { error: { message: "Antspace returned an invalid response. Please try again shortly." } };
   }
 }
 

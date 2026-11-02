@@ -44,7 +44,7 @@ export default function MfaSetup() {
 
   return <article className="dashboard-panel mfa-setup" aria-busy={busy}>
     <div className="panel-title"><div><p className="section-label">Payment approvals</p><h2>Your authenticator</h2></div><Icon name="shield" size={24} /></div>
-    {configured === true ? <p className="form-notice ok" role="status">Your authenticator is ready. Use its six-digit PAYL code when a purchase needs approval.</p> : <>
+    {configured === true ? <p className="form-notice ok" role="status">Your authenticator is ready. Use its six-digit authenticator code when a purchase needs approval.</p> : <>
       <p className="form-intro">Purchases above your auto-approval limit need a six-digit code. Set up your own authenticator to approve them.</p>
       {configured === null && !error && <p role="status">Checking your setup…</p>}
       {!enrollment && (configured === false || error) && <button className="primary-button" disabled={busy} onClick={() => void update("start")}>{busy ? "Preparing…" : "Set up authenticator"}</button>}

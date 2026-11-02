@@ -34,19 +34,19 @@ export default function LoginForm({ demoEmail, demoPassword, prefilled, homeUrl,
     <label><span>Email address</span><input required aria-label="Email" type="email" autoComplete="username" placeholder="you@business.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
     <label><span>Password</span><input required aria-label="Password" type="password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
     {error && <p className="form-notice error" role="alert">{error}</p>}
-    {busy && <p className="fineprint" role="status">Connecting to PAYL. If the sandbox was asleep, this may take up to a minute.</p>}
+    {busy && <p className="fineprint" role="status">Connecting to Antspace. If the sandbox was asleep, this may take up to a minute.</p>}
     <button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in to your business"}<Icon name="arrow" size={16} /></button>
     <small>{prefilled ? "Sandbox credentials are prefilled for local testing." : "Use the email and password you registered for your business."}</small>
-    <a className="auth-link" href="/register">New to PAYL? Create a merchant account</a>
+    <a className="auth-link" href="/register">New to Antspace? Create a merchant account</a>
   </form></AuthShell>;
 }
 
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
-  if (!text.trim()) return { error: { message: `PAYL did not return a response (${response.status})` } };
+  if (!text.trim()) return { error: { message: `Antspace did not return a response (${response.status})` } };
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    return { error: { message: "PAYL returned an invalid response. Please try again shortly." } };
+    return { error: { message: "Antspace returned an invalid response. Please try again shortly." } };
   }
 }

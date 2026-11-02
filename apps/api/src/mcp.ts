@@ -31,7 +31,7 @@ function registerWalletTools(server: McpServer, service: PaylService, consumerId
   server.registerTool(
     "wallet.get_summary",
     {
-      title: "Get PAYL wallet summary",
+      title: "Get Antspace wallet summary",
       description: "Returns permission-scoped sandbox balances without reusable payment credentials.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -123,7 +123,7 @@ function registerWalletTools(server: McpServer, service: PaylService, consumerId
     "payment.request_refund",
     {
       title: "Refund an eligible order",
-      description: "Immediately refunds the full captured amount under the merchant policy. PAYL retains its original fee and charges it to the merchant.",
+      description: "Immediately refunds the full captured amount under the merchant policy. Antspace retains its original fee and charges it to the merchant.",
       inputSchema: {
         orderId: z.string().min(3).max(128),
         idempotencyKey: z.string().min(8).max(128),
@@ -146,7 +146,7 @@ function registerCommerceNetworkTools(server: McpServer, service: PaylService, c
   server.registerTool(
     "commerce.list_merchants",
     {
-      title: "List PAYL merchants",
+      title: "List Antspace merchants",
       description: "Discovers active registered merchants without configuring a separate MCP connection for each one.",
       inputSchema: { query: z.string().max(200).optional() },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -163,7 +163,7 @@ function registerCommerceNetworkTools(server: McpServer, service: PaylService, c
   server.registerTool(
     "commerce.search_offers",
     {
-      title: "Search offers across PAYL merchants",
+      title: "Search offers across Antspace merchants",
       description: "Searches active, fixed-price offers across every registered merchant or filters to one merchant.",
       inputSchema: {
         query: z.string().max(200).optional(),
@@ -251,7 +251,7 @@ function registerCommerceNetworkTools(server: McpServer, service: PaylService, c
     "commerce.cancel_order",
     {
       title: "Cancel a pending merchant order",
-      description: "Cancels an order before fulfillment and reverses the gross capture, merchant pending revenue, and PAYL fee.",
+      description: "Cancels an order before fulfillment and reverses the gross capture, merchant pending revenue, and Antspace fee.",
       inputSchema: {
         orderId: z.string().min(3).max(128),
         idempotencyKey: z.string().min(8).max(128),
@@ -294,7 +294,7 @@ function createWalletServer(service: PaylService, consumerId: string): McpServer
   const server = new McpServer(
     { name: "payl-wallet-payment", version: "0.1.0" },
     {
-      instructions: "PAYL is a sandbox consumer wallet. Use payment.prepare only with the exact merchant-signed quote. Never alter signed fields or approve for the human. If approval is pending, show approvalUrl to the user, then poll payment.get_status. A mandate is single-use and must go only to its bound merchant. Cancel unused payment authority with payment.cancel. Call payment.request_refund only after explicit consumer confirmation; eligible refunds return the full order amount while PAYL retains its fee from the merchant.",
+      instructions: "Antspace is a sandbox consumer wallet. Use payment.prepare only with the exact merchant-signed quote. Never alter signed fields or approve for the human. If approval is pending, show approvalUrl to the user, then poll payment.get_status. A mandate is single-use and must go only to its bound merchant. Cancel unused payment authority with payment.cancel. Call payment.request_refund only after explicit consumer confirmation; eligible refunds return the full order amount while Antspace retains its fee from the merchant.",
     },
   );
   registerWalletTools(server, service, consumerId);
@@ -305,7 +305,7 @@ function createCommerceNetworkServer(service: PaylService, consumerId: string): 
   const server = new McpServer(
     { name: "payl-commerce-network", version: "0.1.0" },
     {
-      instructions: "PAYL commerce is a multi-merchant sandbox network. Discover registered merchants and compare their active offers through this one connection. Every signed quote remains bound to exactly one merchant. Prepare payment through the wallet, then commit the unchanged quote and single-use mandate here. Digital downloads with an attached file fulfill immediately; other orders remain pending until the merchant attaches a result and fulfills them. A consumer may cancel a pending-fulfillment order with commerce.cancel_order.",
+      instructions: "Antspace commerce is a multi-merchant sandbox network. Discover registered merchants and compare their active offers through this one connection. Every signed quote remains bound to exactly one merchant. Prepare payment through the wallet, then commit the unchanged quote and single-use mandate here. Digital downloads with an attached file fulfill immediately; other orders remain pending until the merchant attaches a result and fulfills them. A consumer may cancel a pending-fulfillment order with commerce.cancel_order.",
     },
   );
   registerCommerceNetworkTools(server, service, consumerId);
@@ -316,7 +316,7 @@ function createConsumerServer(service: PaylService, consumerId: string): McpServ
   const server = new McpServer(
     { name: "payl-consumer-network", version: "0.1.0" },
     {
-      instructions: "PAYL is a single plug-and-play consumer connection for wallet and multi-merchant commerce. Discover offers across every registered merchant, create a signed quote, prepare payment through the wallet, and commit the unchanged quote. The consumer's spending policy and approval rules always apply. Show approvalUrl when human approval is required, and request refunds only after explicit consumer confirmation.",
+      instructions: "Antspace is a single plug-and-play consumer connection for wallet and multi-merchant commerce. Discover offers across every registered merchant, create a signed quote, prepare payment through the wallet, and commit the unchanged quote. The consumer's spending policy and approval rules always apply. Show approvalUrl when human approval is required, and request refunds only after explicit consumer confirmation.",
     },
   );
   registerWalletTools(server, service, consumerId);
@@ -328,7 +328,7 @@ function createMerchantServer(service: PaylService, merchantId: string): McpServ
   const server = new McpServer(
     { name: "payl-merchant-commerce", version: "0.1.0" },
     {
-      instructions: "PAYL merchant commerce is a sandbox. Search offers, retrieve details, and create a signed quote before preparing payment. Call commerce.commit_order only with the unchanged signed quote and a PAYL mandate bound to that quote and merchant. Treat commit_order as a financial write.",
+      instructions: "Antspace merchant commerce is a sandbox. Search offers, retrieve details, and create a signed quote before preparing payment. Call commerce.commit_order only with the unchanged signed quote and an Antspace mandate bound to that quote and merchant. Treat commit_order as a financial write.",
     },
   );
 
@@ -390,7 +390,7 @@ function createMerchantServer(service: PaylService, merchantId: string): McpServ
     "commerce.commit_order",
     {
       title: "Commit and fulfill a quote-bound order",
-      description: "Consumes a PAYL single-use mandate, captures reserved funds, commits the order, and returns a signed receipt.",
+      description: "Consumes an Antspace single-use mandate, captures reserved funds, commits the order, and returns a signed receipt.",
       inputSchema: {
         signedQuote: SignedQuoteSchema,
         mandate: PaymentMandateSchema,
@@ -460,7 +460,7 @@ export async function handleCommerceMcp(service: PaylService, request: Request, 
 export async function handleConsumerMcp(service: PaylService, request: Request, response: Response): Promise<void> {
   const consumerId = request.auth?.extra?.consumerId;
   if (typeof consumerId !== "string") {
-    response.status(401).json({ error: "PAYL access requires an authenticated consumer OAuth grant" });
+    response.status(401).json({ error: "Antspace access requires an authenticated consumer OAuth grant" });
     return;
   }
   await handle(createConsumerServer(service, consumerId), request, response);

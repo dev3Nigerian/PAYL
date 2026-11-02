@@ -178,7 +178,7 @@ export class HttpPayPalGateway implements PayPalGateway {
       purchase_units: [{
         reference_id: input.topupId,
         custom_id: input.topupId,
-        description: "PAYL sandbox wallet funding",
+        description: "Antspace sandbox wallet funding",
         payee: { merchant_id: this.config.merchantId },
         amount: { currency_code: "USD", value: major(input.amountMinor) },
       }],
@@ -206,14 +206,14 @@ export class HttpPayPalGateway implements PayPalGateway {
     const result = await this.request<PayPalBatchResponse>("/v1/payments/payouts", "POST", {
       sender_batch_header: {
         sender_batch_id: input.payoutId,
-        email_subject: "Your PAYL sandbox merchant payout",
+        email_subject: "Your Antspace sandbox merchant payout",
       },
       items: [{
         recipient_type: "EMAIL",
         amount: { value: major(input.amountMinor), currency: "USD" },
         receiver: input.recipientEmail,
         sender_item_id: input.payoutId,
-        note: "PAYL sandbox merchant settlement",
+        note: "Antspace sandbox merchant settlement",
       }],
     }, `payout-create-${input.payoutId}`);
     const batchId = result.batch_header?.payout_batch_id;

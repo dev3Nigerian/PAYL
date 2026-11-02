@@ -83,15 +83,15 @@ function minorUnits(value: string): string {
 }
 
 function codexConfig(endpoint: string): string {
-  return `# PAYL consumer MCP connection\n[mcp_servers.payl]\nurl = "${endpoint}"\nenabled = true\nrequired = false\ntool_timeout_sec = 90\ndefault_tools_approval_mode = "writes"\nenabled_tools = [\n  "wallet.get_summary",\n  "wallet.get_policy",\n  "payment.prepare",\n  "payment.get_status",\n  "payment.cancel",\n  "payment.request_refund",\n  "commerce.list_merchants",\n  "commerce.search_offers",\n  "commerce.get_offer",\n  "commerce.create_quote",\n  "commerce.commit_order",\n  "commerce.get_order",\n  "commerce.cancel_order",\n]`;
+  return `# Antspace consumer MCP connection\n[mcp_servers.antspace]\nurl = "${endpoint}"\nenabled = true\nrequired = false\ntool_timeout_sec = 90\ndefault_tools_approval_mode = "writes"\nenabled_tools = [\n  "wallet.get_summary",\n  "wallet.get_policy",\n  "payment.prepare",\n  "payment.get_status",\n  "payment.cancel",\n  "payment.request_refund",\n  "commerce.list_merchants",\n  "commerce.search_offers",\n  "commerce.get_offer",\n  "commerce.create_quote",\n  "commerce.commit_order",\n  "commerce.get_order",\n  "commerce.cancel_order",\n]`;
 }
 
 function cursorConfig(endpoint: string): string {
-  return JSON.stringify({ mcpServers: { payl: { url: endpoint } } }, null, 2);
+  return JSON.stringify({ mcpServers: { antspace: { url: endpoint } } }, null, 2);
 }
 
 function cascadeConfig(endpoint: string): string {
-  return JSON.stringify({ mcpServers: { payl: { serverUrl: endpoint } } }, null, 2);
+  return JSON.stringify({ mcpServers: { antspace: { serverUrl: endpoint } } }, null, 2);
 }
 
 function refundLabel(order: WalletState["orders"][number]): string {
@@ -153,7 +153,7 @@ function ConnectAiPanel({
   function downloadConfig() {
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([config], { type: "text/plain" }));
-    link.download = "payl-mcp.toml";
+    link.download = "antspace-mcp.toml";
     link.click();
     URL.revokeObjectURL(link.href);
   }
@@ -162,26 +162,26 @@ function ConnectAiPanel({
     <article className="dashboard-panel connect-hero">
       <div>
         <p className="section-label">One-time setup</p>
-        <h2>Connect your AI to PAYL</h2>
-        <p className="form-intro">Add one PAYL connection to your MCP client. It gives your AI access to your wallet and every registered merchant without another setup for each store.</p>
+        <h2>Connect your AI to Antspace</h2>
+        <p className="form-intro">Add one Antspace connection to your MCP client. It gives your AI access to your wallet and every registered merchant without another setup for each store.</p>
         <div className="connect-actions"><button className="primary-button" type="button" onClick={() => void copy(config, "config")}>{copied === "config" ? "Copied setup" : "Copy Codex setup"}</button><button className="secondary-button" type="button" onClick={downloadConfig}>Download config</button></div>
       </div>
-      <div className="connect-trust"><span className="connect-trust-icon">01</span><div><strong>Your password stays with PAYL</strong><small>OAuth opens a secure PAYL sign-in and permission screen. Your AI receives scoped tools, not your password or wallet secret.</small></div></div>
+      <div className="connect-trust"><span className="connect-trust-icon">01</span><div><strong>Your password stays with Antspace</strong><small>OAuth opens a secure Antspace sign-in and permission screen. Your AI receives scoped tools, not your password or wallet secret.</small></div></div>
     </article>
 
     <article className="dashboard-panel connect-steps-panel">
       <div className="panel-title"><div><p className="section-label">How to connect</p><h2>Three simple steps</h2></div><span>{connections.length ? `${connections.length} connected` : "Not connected yet"}</span></div>
-      <ol className="connect-steps"><li><strong>Add PAYL to your AI client</strong><span>In Codex, open <b>/mcp</b> or MCP settings and paste the copied setup. Other clients should add the Streamable HTTP URL below.</span></li><li><strong>Sign in and allow</strong><span>PAYL opens automatically. Sign in as the consumer, review the wallet and commerce permissions, then choose <b>Allow connection</b>.</span></li><li><strong>Start shopping</strong><span>Ask your AI to check your PAYL balance or compare offers. The same connection works across all merchants.</span></li></ol>
+      <ol className="connect-steps"><li><strong>Add Antspace to your AI client</strong><span>In Codex, open <b>/mcp</b> or MCP settings and paste the copied setup. Other clients should add the Streamable HTTP URL below.</span></li><li><strong>Sign in and allow</strong><span>Antspace opens automatically. Sign in as the consumer, review the wallet and commerce permissions, then choose <b>Allow connection</b>.</span></li><li><strong>Start shopping</strong><span>Ask your AI to check your Antspace balance or compare offers. The same connection works across all merchants.</span></li></ol>
     </article>
 
     <article className="dashboard-panel connection-guides-panel">
       <div className="panel-title"><div><p className="section-label">Client guides</p><h2>Connect from your AI IDE</h2></div><span>One URL · OAuth</span></div>
-      <p className="form-intro guides-intro">Choose the client you use below. PAYL uses the same connection for your wallet and every merchant, so you only authorize it once. Do not add an API key or bearer token.</p>
+      <p className="form-intro guides-intro">Choose the client you use below. Antspace uses the same connection for your wallet and every merchant, so you only authorize it once. Do not add an API key or bearer token.</p>
       <div className="connection-guides">
         <details className="connection-guide" open>
           <summary><span>Cursor</span><small>Project or global <code>mcp.json</code></small></summary>
           <div className="connection-guide-body">
-            <ol className="guide-steps"><li>Open <code>.cursor/mcp.json</code> in your project, or <code>%USERPROFILE%\\.cursor\\mcp.json</code> for all projects.</li><li>Paste the JSON below, save, then reload Cursor.</li><li>Select PAYL and choose <b>Connect</b>. Sign in and choose <b>Allow and connect</b>.</li></ol>
+            <ol className="guide-steps"><li>Open <code>.cursor/mcp.json</code> in your project, or <code>%USERPROFILE%\\.cursor\\mcp.json</code> for all projects.</li><li>Paste the JSON below, save, then reload Cursor.</li><li>Select Antspace and choose <b>Connect</b>. Sign in and choose <b>Allow and connect</b>.</li></ol>
             <div className="guide-code-title"><span>Cursor configuration</span><button className="text-button" type="button" onClick={() => void copy(cursorMcpConfig, "cursor")}>{copied === "cursor" ? "Copied" : "Copy JSON"}</button></div>
             <pre className="guide-code"><code>{cursorMcpConfig}</code></pre>
           </div>
@@ -190,7 +190,7 @@ function ConnectAiPanel({
         <details className="connection-guide">
           <summary><span>Devin</span><small>Custom MCP server</small></summary>
           <div className="connection-guide-body">
-            <ol className="guide-steps"><li>Open <b>Settings → Connections → MCP servers</b> and choose <b>Add a custom MCP</b>.</li><li>Choose <b>HTTP</b>, enter the PAYL URL below, select <b>OAuth</b>, and choose <b>Personal</b> access.</li><li>Save, choose <b>Test listing tools</b>, sign in, and choose <b>Allow and connect</b>.</li></ol>
+            <ol className="guide-steps"><li>Open <b>Settings → Connections → MCP servers</b> and choose <b>Add a custom MCP</b>.</li><li>Choose <b>HTTP</b>, enter the Antspace URL below, select <b>OAuth</b>, and choose <b>Personal</b> access.</li><li>Save, choose <b>Test listing tools</b>, sign in, and choose <b>Allow and connect</b>.</li></ol>
             <div className="guide-fields"><span><b>Transport:</b> HTTP</span><span><b>Authentication:</b> OAuth</span><span><b>Access:</b> Personal</span></div>
             <code className="guide-url">{endpoint}</code>
           </div>
@@ -199,7 +199,7 @@ function ConnectAiPanel({
         <details className="connection-guide">
           <summary><span>Windsurf / Cascade</span><small><code>mcp_config.json</code></small></summary>
           <div className="connection-guide-body">
-            <ol className="guide-steps"><li>Open your Cascade MCP configuration file.</li><li>Paste the JSON below and save.</li><li>Restart Windsurf/Cascade, select PAYL, then complete the OAuth login and consent.</li></ol>
+            <ol className="guide-steps"><li>Open your Cascade MCP configuration file.</li><li>Paste the JSON below and save.</li><li>Restart Windsurf/Cascade, select Antspace, then complete the OAuth login and consent.</li></ol>
             <div className="guide-code-title"><span>Cascade configuration</span><button className="text-button" type="button" onClick={() => void copy(cascadeMcpConfig, "cascade")}>{copied === "cascade" ? "Copied" : "Copy JSON"}</button></div>
             <pre className="guide-code"><code>{cascadeMcpConfig}</code></pre>
           </div>
@@ -209,17 +209,17 @@ function ConnectAiPanel({
           <summary><span>Claude</span><small>Claude, Claude Desktop, or Claude Code</small></summary>
           <div className="connection-guide-body">
             <p className="guide-subtitle">Claude web or Claude Desktop</p>
-            <ol className="guide-steps"><li>Open <b>Customize → Connectors</b>, click <b>+</b>, then choose <b>Add custom connector</b>.</li><li>Enter <b>PAYL</b> and the URL below. Leave OAuth client ID and secret empty.</li><li>Click <b>Add</b>, then <b>Connect</b>. Enable PAYL from the chat <b>+</b> menu.</li></ol>
+            <ol className="guide-steps"><li>Open <b>Customize → Connectors</b>, click <b>+</b>, then choose <b>Add custom connector</b>.</li><li>Enter <b>Antspace</b> and the URL below. Leave OAuth client ID and secret empty.</li><li>Click <b>Add</b>, then <b>Connect</b>. Enable Antspace from the chat <b>+</b> menu.</li></ol>
             <p className="guide-subtitle">Claude Code</p>
-            <pre className="guide-code"><code>{`claude mcp add --transport http payl ${endpoint}`}</code></pre>
-            <p className="guide-note">Then run <code>/mcp</code>, select PAYL, and complete the browser OAuth flow. Use Claude’s Connectors settings for remote PAYL; do not put this hosted URL in <code>claude_desktop_config.json</code>.</p>
+            <pre className="guide-code"><code>{`claude mcp add --transport http antspace ${endpoint}`}</code></pre>
+            <p className="guide-note">Then run <code>/mcp</code>, select Antspace, and complete the browser OAuth flow. Use Claude’s Connectors settings for remote Antspace; do not put this hosted URL in <code>claude_desktop_config.json</code>.</p>
           </div>
         </details>
 
         <details className="connection-guide">
           <summary><span>Any other MCP client</span><small>Remote Streamable HTTP</small></summary>
           <div className="connection-guide-body">
-            <ol className="guide-steps"><li>Add a new remote MCP server using <b>Streamable HTTP</b>.</li><li>Paste the PAYL URL below and choose <b>OAuth</b> authentication.</li><li>Sign in as the consumer and choose <b>Allow and connect</b> when PAYL displays the permission screen.</li></ol>
+            <ol className="guide-steps"><li>Add a new remote MCP server using <b>Streamable HTTP</b>.</li><li>Paste the Antspace URL below and choose <b>OAuth</b> authentication.</li><li>Sign in as the consumer and choose <b>Allow and connect</b> when Antspace displays the permission screen.</li></ol>
             <code className="guide-url">{endpoint}</code>
           </div>
         </details>
@@ -227,7 +227,7 @@ function ConnectAiPanel({
     </article>
 
     <article className="dashboard-panel endpoint-panel">
-      <div className="panel-title"><div><p className="section-label">Streamable HTTP</p><h2>PAYL connection URL</h2></div><button className="secondary-button" type="button" onClick={() => void copy(endpoint, "endpoint")}>{copied === "endpoint" ? "Copied" : "Copy URL"}</button></div>
+      <div className="panel-title"><div><p className="section-label">Streamable HTTP</p><h2>Antspace connection URL</h2></div><button className="secondary-button" type="button" onClick={() => void copy(endpoint, "endpoint")}>{copied === "endpoint" ? "Copied" : "Copy URL"}</button></div>
       <code className="endpoint-value">{endpoint}</code>
       <p className="form-intro endpoint-help">Use this single URL for both wallet and commerce. OAuth discovery is automatic; you do not need to paste a client ID, secret, or merchant URL.</p>
     </article>
@@ -297,7 +297,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
   }
 
   async function refundOrder(order: WalletState["orders"][number]) {
-    if (!window.confirm(`Refund ${money(order.captured_amount_minor, order.currency)} for ${order.offer_name ?? order.merchant_name}? This returns the full amount to your PAYL wallet.`)) return;
+    if (!window.confirm(`Refund ${money(order.captured_amount_minor, order.currency)} for ${order.offer_name ?? order.merchant_name}? This returns the full amount to your Antspace wallet.`)) return;
     setRefunding(order.id);
     setNotice(null);
     try {
@@ -306,7 +306,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           idempotencyKey: `dashboard-${order.id}-${crypto.randomUUID()}`.slice(0, 128),
-          reason: "Consumer requested from the PAYL dashboard",
+          reason: "Consumer requested from the Antspace dashboard",
         }),
       });
       const body = await response.json() as { error?: { message?: string } };
@@ -319,7 +319,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
   }
 
   async function cancelOrder(order: WalletState["orders"][number]) {
-    if (!window.confirm(`Cancel ${order.offer_name ?? order.merchant_name}? The full capture, including PAYL's fee, will be reversed.`)) return;
+    if (!window.confirm(`Cancel ${order.offer_name ?? order.merchant_name}? The full capture, including Antspace's fee, will be reversed.`)) return;
     setCancelling(order.id);
     setNotice(null);
     try {
@@ -386,7 +386,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
               <button className="primary-button full-button" type="button" onClick={() => setTab("permissions")}>Edit policy</button>
             </aside>
           </section>
-          <article className="dashboard-panel connect-callout"><div><p className="section-label">Shop your way</p><h2>Explore PAYL with AI</h2><p>Chat here to compare live offers and review a purchase, or connect your own AI client through MCP.</p></div><div className="connect-actions"><button className="primary-button" type="button" onClick={() => setTab("shop")}>Open AI chat</button><button className="secondary-button" type="button" onClick={() => setTab("connect")}>Connect an AI client</button></div></article>
+          <article className="dashboard-panel connect-callout"><div><p className="section-label">Shop your way</p><h2>Explore Antspace with AI</h2><p>Chat here to compare live offers and review a purchase, or connect your own AI client through MCP.</p></div><div className="connect-actions"><button className="primary-button" type="button" onClick={() => setTab("shop")}>Open AI chat</button><button className="secondary-button" type="button" onClick={() => setTab("connect")}>Connect an AI client</button></div></article>
         </>}
 
         {tab === "shop" && <ShopWithAi consumerRef={initialState?.wallet.consumerRef ?? "consumer_demo"} offline={!initialState} onAddFunds={() => setTab("wallet")} />}
@@ -398,7 +398,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
           {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
           <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} onCancel={(order) => void cancelOrder(order)} refunding={refunding} cancelling={cancelling} />
           <div className="paypal-topup-history"><h3>PayPal funding</h3>
-            {(initialState?.topups.length ?? 0) === 0 ? <p className="empty-state">No PayPal top-ups yet.</p> : initialState?.topups.map((topup) => <div className="paypal-topup-row" key={topup.topupId}><div><strong>{money(topup.amountMinor, topup.currency)}</strong><span>{topup.status.replaceAll("_", " ")} · {new Date(topup.createdAt).toLocaleString("en-US")}</span>{topup.paypalCaptureId && <small>PayPal capture {topup.paypalCaptureId}</small>}{Number(topup.reversedAmountMinor) > 0 && <small>Reversed: {money(topup.reversedAmountMinor, topup.currency)}</small>}{Number(topup.providerFeeMinor) > 0 && <small>PayPal fee paid by PAYL: {money(topup.providerFeeMinor, topup.currency)}</small>}</div></div>)}
+            {(initialState?.topups.length ?? 0) === 0 ? <p className="empty-state">No PayPal top-ups yet.</p> : initialState?.topups.map((topup) => <div className="paypal-topup-row" key={topup.topupId}><div><strong>{money(topup.amountMinor, topup.currency)}</strong><span>{topup.status.replaceAll("_", " ")} · {new Date(topup.createdAt).toLocaleString("en-US")}</span>{topup.paypalCaptureId && <small>PayPal capture {topup.paypalCaptureId}</small>}{Number(topup.reversedAmountMinor) > 0 && <small>Reversed: {money(topup.reversedAmountMinor, topup.currency)}</small>}{Number(topup.providerFeeMinor) > 0 && <small>PayPal fee paid by Antspace: {money(topup.providerFeeMinor, topup.currency)}</small>}</div></div>)}
           </div>
         </article>}
 
@@ -408,7 +408,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
             <h2>Agent spending limits</h2>
             <p className="form-intro">These limits are enforced by the wallet before any funds are reserved. Changes apply to future payment requests.</p>
             <label><span>Auto-approve up to</span><div className="money-input"><b>$</b><input aria-label="Auto-approve limit" inputMode="decimal" min="0" step="0.01" value={draft.autoApprove} onChange={(event) => setDraft({ ...draft, autoApprove: event.target.value })} /></div><small>Payments above this amount require your approval.</small></label>
-            <label><span>Maximum per transaction</span><div className="money-input"><b>$</b><input aria-label="Per-transaction limit" inputMode="decimal" min="0.01" step="0.01" value={draft.perTransaction} onChange={(event) => setDraft({ ...draft, perTransaction: event.target.value })} /></div><small>PAYL declines any single payment above this limit.</small></label>
+            <label><span>Maximum per transaction</span><div className="money-input"><b>$</b><input aria-label="Per-transaction limit" inputMode="decimal" min="0.01" step="0.01" value={draft.perTransaction} onChange={(event) => setDraft({ ...draft, perTransaction: event.target.value })} /></div><small>Antspace declines any single payment above this limit.</small></label>
             <label><span>Maximum per day</span><div className="money-input"><b>$</b><input aria-label="Daily limit" inputMode="decimal" min="0.01" step="0.01" value={draft.daily} onChange={(event) => setDraft({ ...draft, daily: event.target.value })} /></div><small>Captured payments reset against this limit each day.</small></label>
             {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
             <button className="primary-button" type="submit" disabled={saving || !policy}>{saving ? "Saving…" : "Save policy"}</button>
@@ -421,7 +421,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
         <article className="dashboard-panel connections-panel">
           <div className="panel-title"><div><p className="section-label">OAuth grants</p><h2>Connected AI clients</h2></div><span>{connections.length} active</span></div>
           {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
-          {connections.length === 0 ? <p className="empty-state">No AI clients are connected. Add PAYL through an OAuth-capable MCP client to create a scoped grant.</p> : <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={`${connection.clientId}:${connection.resource}`}><div><strong>{connection.clientName}</strong><span>{connection.scopes.join(" · ")}</span><small>Connected {new Date(connection.connectedAt).toLocaleString("en-US")}</small></div><button className="secondary-button" type="button" onClick={() => void revokeConnection(connection.clientId, connection.resource)}>Revoke</button></div>)}</div>}
+          {connections.length === 0 ? <p className="empty-state">No AI clients are connected. Add Antspace through an OAuth-capable MCP client to create a scoped grant.</p> : <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={`${connection.clientId}:${connection.resource}`}><div><strong>{connection.clientName}</strong><span>{connection.scopes.join(" · ")}</span><small>Connected {new Date(connection.connectedAt).toLocaleString("en-US")}</small></div><button className="secondary-button" type="button" onClick={() => void revokeConnection(connection.clientId, connection.resource)}>Revoke</button></div>)}</div>}
         </article></>}
 
         {tab === "security" && <section className="security-grid section-panel">

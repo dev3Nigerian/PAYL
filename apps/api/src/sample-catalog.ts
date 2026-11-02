@@ -38,7 +38,7 @@ export async function seedSampleCatalog(pool: pg.Pool, bootstrapMerchantId: stri
         const offerId = `offer_sample_${product.slug}`;
         const assetId = `asset_sample_${product.slug}`;
         const contents = sampleArchive({
-          "README.md": `# ${product.name}\n\n${product.description}\n\n## Getting started\n${product.instructions}\n\n## Sandbox sample\nThis original demonstration product is supplied by a fictional PAYL sample merchant.\nYou may edit and reuse these sample files in your own projects.\nPurchases use virtual USD only. No external account, subscription, or paid license is included.\n`,
+          "README.md": `# ${product.name}\n\n${product.description}\n\n## Getting started\n${product.instructions}\n\n## Sandbox sample\nThis original demonstration product is supplied by a fictional Antspace sample merchant.\nYou may edit and reuse these sample files in your own projects.\nPurchases use virtual USD only. No external account, subscription, or paid license is included.\n`,
           ...product.files,
         });
         await client.query(

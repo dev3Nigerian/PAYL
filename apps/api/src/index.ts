@@ -36,7 +36,7 @@ server.listen(config.port, () => {
       commerceMcp: new URL("/mcp/commerce", config.publicBaseUrl).href,
       merchantMcp: new URL(`/mcp/merchants/${config.sandboxMerchantId}`, config.publicBaseUrl).href,
     },
-    "PAYL sandbox is ready",
+    "Antspace sandbox is ready",
   );
 });
 

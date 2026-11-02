@@ -68,6 +68,8 @@ services:
 
   - type: web
     name: payl-consumer-dev3nigerian
+    domains:
+      - antspace.online
     runtime: docker
     plan: starter
     numInstances: 1
@@ -81,6 +83,8 @@ services:
         value: https://payl-api-dev3nigerian.onrender.com
       - key: MERCHANT_WEB_URL
         value: https://payl-merchant-dev3nigerian.onrender.com
+      - key: PAYL_PUBLIC_WEB_URL
+        value: https://antspace.online
       - key: PAYL_PREFILL_DEMO_CREDENTIALS
         value: "false"
       - key: NEXT_TELEMETRY_DISABLED
@@ -88,6 +92,8 @@ services:
 
   - type: web
     name: payl-merchant-dev3nigerian
+    domains:
+      - merchants.antspace.online
     runtime: docker
     plan: starter
     numInstances: 1
@@ -101,6 +107,8 @@ services:
         value: https://payl-api-dev3nigerian.onrender.com
       - key: APPROVAL_WEB_URL
         value: https://payl-consumer-dev3nigerian.onrender.com
+      - key: PAYL_PUBLIC_WEB_URL
+        value: https://merchants.antspace.online
       - key: PAYL_PREFILL_DEMO_CREDENTIALS
         value: "false"
       - key: NEXT_TELEMETRY_DISABLED

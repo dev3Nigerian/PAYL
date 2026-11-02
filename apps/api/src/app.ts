@@ -65,7 +65,7 @@ export function createApp(
     issuerUrl: new URL(config.publicBaseUrl),
     baseUrl: new URL(config.publicBaseUrl),
     resourceServerUrl: mcpResource,
-    resourceName: "PAYL consumer-to-merchant payments",
+    resourceName: "Antspace consumer-to-merchant payments",
     scopesSupported: [...MCP_SCOPES],
     serviceDocumentationUrl: new URL("/docs/mcp", config.publicBaseUrl),
   }));
@@ -93,7 +93,7 @@ export function createApp(
   app.get("/docs/mcp", (_request, response) => {
     const endpoint = new URL("/mcp", config.publicBaseUrl).href;
     const dashboard = new URL("/", config.approvalWebUrl).href;
-    response.type("html").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect PAYL to your AI</title><style>body{margin:0;padding:32px;background:#f3f4ed;color:#111914;font-family:system-ui,sans-serif;line-height:1.6}.card{max-width:680px;margin:auto;padding:32px;border:1px solid #dce1d7;border-radius:24px;background:#fff;box-shadow:0 24px 70px rgba(30,52,38,.12)}.brand{color:#0b6b42;font-size:22px;font-weight:900}h1{margin:28px 0 8px;line-height:1.1}h2{margin-top:28px;font-size:18px}p,li{color:#627068}code,pre{display:block;overflow:auto;padding:14px;border-radius:12px;background:#f1f5ed;color:#0b6b42}a{color:#0b6b42;font-weight:700}</style></head><body><main class="card"><div class="brand">PAYL</div><h1>Connect your AI once</h1><p>Add one MCP server to your AI client. The same connection includes your PAYL wallet and every registered merchant.</p><h2>Connection URL</h2><code>${html(endpoint)}</code><h2>Setup</h2><ol><li>Add the URL above in Codex or another OAuth-capable MCP client.</li><li>When PAYL opens, sign in as the consumer and choose <strong>Allow connection</strong>.</li><li>Ask your AI to check your balance or compare PAYL offers.</li></ol><p>Your AI receives scoped tools through OAuth; it never receives your PAYL password or wallet secret.</p><p><a href="${html(dashboard)}">Open the consumer dashboard</a> to copy a Codex setup file and manage connected clients.</p></main></body></html>`);
+    response.type("html").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Antspace to your AI</title><style>body{margin:0;padding:32px;background:#f3f4ed;color:#111914;font-family:system-ui,sans-serif;line-height:1.6}.card{max-width:680px;margin:auto;padding:32px;border:1px solid #dce1d7;border-radius:24px;background:#fff;box-shadow:0 24px 70px rgba(30,52,38,.12)}.brand{color:#0b6b42;font-size:22px;font-weight:900}h1{margin:28px 0 8px;line-height:1.1}h2{margin-top:28px;font-size:18px}p,li{color:#627068}code,pre{display:block;overflow:auto;padding:14px;border-radius:12px;background:#f1f5ed;color:#0b6b42}a{color:#0b6b42;font-weight:700}</style></head><body><main class="card"><div class="brand">Antspace</div><h1>Connect your AI once</h1><p>Add one MCP server to your AI client. The same connection includes your Antspace wallet and every registered merchant.</p><h2>Connection URL</h2><code>${html(endpoint)}</code><h2>Setup</h2><ol><li>Add the URL above in Codex or another OAuth-capable MCP client.</li><li>When Antspace opens, sign in as the consumer and choose <strong>Allow connection</strong>.</li><li>Ask your AI to check your balance or compare Antspace offers.</li></ol><p>Your AI receives scoped tools through OAuth; it never receives your Antspace password or wallet secret.</p><p><a href="${html(dashboard)}">Open the consumer dashboard</a> to copy a Codex setup file and manage connected clients.</p></main></body></html>`);
   });
 
   app.get("/terms/digital-goods-v1", (_request, response) => {
@@ -870,7 +870,7 @@ function hostedAuthorizeReturnTo(value: unknown, config: Config): string {
     throw new DomainError("HANDOFF_RETURN_INVALID", "OAuth return URL is invalid", 400);
   }
   if (target.origin !== new URL(config.publicBaseUrl).origin || target.pathname !== "/authorize") {
-    throw new DomainError("HANDOFF_RETURN_INVALID", "Browser handoff may return only to PAYL authorization", 400);
+    throw new DomainError("HANDOFF_RETURN_INVALID", "Browser handoff may return only to Antspace authorization", 400);
   }
   return target.href;
 }

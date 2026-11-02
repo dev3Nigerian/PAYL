@@ -67,10 +67,10 @@ function html(value: string): string {
 
 function scopeCopy(scope: string): { label: string; description: string } {
   const copy: Record<string, { label: string; description: string }> = {
-    "wallet:read": { label: "View your PAYL wallet", description: "Balance, recent activity, and your spending policy." },
+    "wallet:read": { label: "View your Antspace wallet", description: "Balance, recent activity, and your spending policy." },
     "wallet:pay": { label: "Prepare payments", description: "Request payment authority within the limits you set." },
     "wallet:refund": { label: "Request refunds", description: "Refund eligible purchases only after you confirm the action." },
-    "commerce:read": { label: "Discover merchants and offers", description: "Search products and services across the PAYL network." },
+    "commerce:read": { label: "Discover merchants and offers", description: "Search products and services across the Antspace network." },
     "commerce:quote": { label: "Create signed quotes", description: "Ask a merchant for an exact, expiring price before payment." },
     "commerce:order": { label: "Place and manage orders", description: "Commit a matching quote and view or cancel eligible orders." },
   };
@@ -188,9 +188,9 @@ export class PaylOAuthProvider implements OAuthServerProvider {
     }).join("");
     response.status(200).type("html").send(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Authorize ${html(clientName)} · PAYL</title><style>
+<title>Authorize ${html(clientName)} · Antspace</title><style>
 body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f2f3ee;color:#111914;font-family:Inter,system-ui,sans-serif}.card{width:min(100%,600px);padding:32px;border:1px solid #dce1d7;border-radius:24px;background:white;box-shadow:0 24px 70px rgba(30,52,38,.13)}.brand{color:#0b6b42;font-size:22px;font-weight:900}.eyebrow{margin:32px 0 7px;color:#0b6b42;font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}h1{margin:0;font-size:34px;letter-spacing:-.04em}p{color:#627068;line-height:1.6}.intro{margin-bottom:22px}.scope-list{display:grid;gap:10px;margin:0;padding:0;list-style:none}.scope-list li{padding:14px 16px;border-radius:14px;background:#f3f6ef}.scope-list strong,.scope-list span{display:block}.scope-list span{margin-top:3px;color:#627068;font-size:13px;line-height:1.45}.notice{margin:18px 0 0;padding:13px 15px;border-radius:12px;background:#fff8dc;color:#67550d;font-size:13px;line-height:1.5}.actions{display:grid;grid-template-columns:1fr 1.5fr;gap:12px;margin-top:24px}button{border:0;border-radius:13px;padding:15px;font:inherit;font-weight:800;cursor:pointer}.deny{background:#e9ece5}.allow{background:#c8f36b}</style></head>
-<body><main class="card"><div class="brand">PAYL</div><p class="eyebrow">AI client authorization</p><h1>Connect ${html(clientName)} to PAYL?</h1><p class="intro">Signed in as <strong>${html(session.email)}</strong>. Your AI will use these scoped permissions to shop and pay on your behalf:</p><ul class="scope-list">${scopeItems}</ul><p class="notice">Your spending policy still applies. PAYL will ask you to approve payments that exceed your automatic limit, and your password is never shared with the AI client.</p><form class="actions" method="post" action="/oauth/consent"><input type="hidden" name="request_id" value="${html(requestId)}"><button class="deny" name="decision" value="deny">Not now</button><button class="allow" name="decision" value="allow">Allow and connect</button></form></main></body></html>`);
+<body><main class="card"><div class="brand">Antspace</div><p class="eyebrow">AI client authorization</p><h1>Connect ${html(clientName)} to Antspace?</h1><p class="intro">Signed in as <strong>${html(session.email)}</strong>. Your AI will use these scoped permissions to shop and pay on your behalf:</p><ul class="scope-list">${scopeItems}</ul><p class="notice">Your spending policy still applies. Antspace will ask you to approve payments that exceed your automatic limit, and your password is never shared with the AI client.</p><form class="actions" method="post" action="/oauth/consent"><input type="hidden" name="request_id" value="${html(requestId)}"><button class="deny" name="decision" value="deny">Not now</button><button class="allow" name="decision" value="allow">Allow and connect</button></form></main></body></html>`);
   }
 
   async decideConsent(session: AuthSession, request: Request, response: Response): Promise<void> {

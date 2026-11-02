@@ -182,7 +182,7 @@ export class IdentityService {
       });
     } catch (error) {
       if ((error as { code?: string; constraint?: string }).code === "23505" && (error as { constraint?: string }).constraint === "auth_users_email_key") {
-        throw new DomainError("EMAIL_ALREADY_REGISTERED", "A PAYL account already uses this email. Sign in to continue.", 409);
+        throw new DomainError("EMAIL_ALREADY_REGISTERED", "An Antspace account already uses this email. Sign in to continue.", 409);
       }
       throw error;
     }
@@ -200,7 +200,7 @@ export class IdentityService {
       [userId, newTotpSecret()],
     )).rows[0];
     if (!user) throw new DomainError("MFA_ALREADY_CONFIGURED", "Your authenticator is already set up", 409);
-    return { secret: user.mfa_pending_secret, account: user.email, issuer: "PAYL Sandbox" };
+    return { secret: user.mfa_pending_secret, account: user.email, issuer: "Antspace Sandbox" };
   }
 
   async confirmMfaEnrollment(userId: string, code: unknown): Promise<{ configured: true }> {

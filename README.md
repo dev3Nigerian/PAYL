@@ -1,14 +1,18 @@
-# PAYL — MCP-Native Consumer and Merchant Payments
+# Antspace — Buy digital products through conversation
 
 **Prepared:** 15 July 2026  
 **Project status:** Standalone sandbox MVP implemented  
 **Product direction:** Consumer AI to merchant AI commerce through MCP
 
+Antspace is the customer-facing name of the PAYL project. The existing `@payl/*` packages, `PAYL_*` environment keys, session cookies, signing identities, and API/webhook addresses retain their names for compatibility. The rebrand requires no database reset or migration. Existing signed terms and purchased files retain their original content.
+
+The public domains are being connected as `antspace.online` for the shared entry and shopper workspace and `merchants.antspace.online` for sellers. Follow the [domain connection guide](docs/deployment/antspace-domain.md) before switching public links. The existing Render addresses continue working throughout the transition.
+
 ## Product thesis
 
-PAYL will be a two-sided payment and commerce network for consumers and merchants:
+Antspace will be a two-sided payment and commerce network for consumers and merchants:
 
-> **A consumer gives an AI bounded spending authority. The AI connects once to the PAYL commerce MCP network, discovers registered merchants, obtains merchant-signed quotes, authorizes payment through PAYL, commits merchant-bound orders, and receives verifiable receipts.**
+> **A consumer gives an AI bounded spending authority. The AI connects once to the Antspace commerce MCP network, discovers registered merchants, obtains merchant-signed quotes, authorizes payment through Antspace, commits merchant-bound orders, and receives verifiable receipts.**
 
 The direction is consumer-and-merchant commerce—not an enterprise-only authorization product.
 
@@ -25,7 +29,7 @@ pnpm dev
 
 This starts:
 
-- PAYL API and MCP servers at `http://localhost:4100`.
+- Antspace API and MCP servers at `http://localhost:4100`.
 - Consumer approval web app at `http://localhost:3000`.
 - Merchant console at `http://localhost:3001`.
 - PostgreSQL 18 at `localhost:54329`.
@@ -55,11 +59,11 @@ pnpm test
 pnpm build
 ```
 
-The database is preloaded with $1,000 of simulated consumer funds. With PayPal Sandbox configured, consumers can also add virtual USD through PayPal Checkout and merchants can withdraw virtual USD through PayPal Payouts. PAYL agent purchases still use signed quotes, spending policy, mandates, and its internal ledger. No real money, card data, bank credentials, or reusable approval credentials are used. Fresh sandbox databases use USD; recreate an existing local sandbox database to remove historical signed artifacts.
+The database is preloaded with $1,000 of simulated consumer funds. With PayPal Sandbox configured, consumers can also add virtual USD through PayPal Checkout and merchants can withdraw virtual USD through PayPal Payouts. Antspace agent purchases still use signed quotes, spending policy, mandates, and its internal ledger. No real money, card data, bank credentials, or reusable approval credentials are used. Fresh sandbox databases use USD; recreate an existing local sandbox database to remove historical signed artifacts.
 
 ## Hosting the public sandbox
 
-PAYL includes Docker images and a Render Blueprint for a three-service hosted sandbox backed by Neon PostgreSQL. The hosted profile requires HTTPS, a remote TLS database, rotated credentials, and a secret-derived signing hierarchy; the API fails closed if any of those requirements is missing.
+Antspace includes Docker images and a Render Blueprint for a three-service hosted sandbox backed by Neon PostgreSQL. The hosted profile requires HTTPS, a remote TLS database, rotated credentials, and a secret-derived signing hierarchy; the API fails closed if any of those requirements is missing.
 
 Follow [the Render and Neon deployment runbook](docs/deployment/render-neon.md). The Blueprint uses one paid Starter instance for each of the three web services ($7 each, $21/month base compute), so idle traffic does not put the dashboards or API lifecycle processing to sleep. Render credits apply through workspace billing. The hosted profile remains simulated-funds-only and is not a live payment deployment.
 
@@ -74,7 +78,7 @@ The consumer TOTP seed is `JBSWY3DPEHPK3PXP`. It is a public local-development s
 
 ## Using the dashboards
 
-Share one entry link: [PAYL home](https://payl-consumer-dev3nigerian.onrender.com/) (or `http://localhost:3000/` locally). The landing page offers **Shop with AI** and **Sell on PAYL**, with separate sign-up and sign-in links for each. The merchant site's root redirects to this same home page. Each workspace remains directly accessible at its own `/dashboard`, and the PAYL logo returns to the shared landing page.
+Share one entry link: [Antspace home](https://payl-consumer-dev3nigerian.onrender.com/) (or `http://localhost:3000/` locally). The landing page offers **Shop with AI** and **Sell on Antspace**, with separate sign-up and sign-in links for each. The merchant site's root redirects to this same home page. Each workspace remains directly accessible at its own `/dashboard`, and the Antspace logo returns to the shared landing page.
 
 Signed-in shoppers and merchants skip their workspace's login and registration forms after the API verifies their session. Expired sessions leave sign-in available; consumer approval links and OAuth handoffs keep their existing return flow. Sessions stay on their respective web origins.
 
@@ -109,11 +113,11 @@ Policy updates are versioned and enforced by the wallet when `payment.prepare` i
 
 ### Shop with AI in the consumer app
 
-The consumer dashboard also has **Shop with AI**. It retrieves currently published merchant offers, uses the retrieved catalog to answer shopping questions, and shows the catalog snapshots supplied to the model. A consumer can then say “Buy it” or “Buy the second one.” The assistant selects one verified active offer, obtains a fresh merchant-signed quote, and uses PAYL's existing policy, mandate, and order services to place the order. An unambiguous instruction for a previously shown offer at unchanged terms can proceed immediately under the wallet policy; a changed price or unclear selection is shown as an exact quote for confirmation in chat. A purchase above the auto-approval limit pauses for separate MFA approval and resumes in chat. Insufficient funds saves the purchase and directs the consumer to PayPal Sandbox top-up. **Resume purchase** refreshes the quote and continues only if the authorized terms still match; changed price, refund terms, or fulfillment requires another confirmation. Conversation history and purchase state belong to the signed-in consumer; repeated chat request IDs cannot create a second payment. **Connect AI** remains available for external MCP clients.
+The consumer dashboard also has **Shop with AI**. It retrieves currently published merchant offers, uses the retrieved catalog to answer shopping questions, and shows the catalog snapshots supplied to the model. A consumer can then say “Buy it” or “Buy the second one.” The assistant selects one verified active offer, obtains a fresh merchant-signed quote, and uses Antspace's existing policy, mandate, and order services to place the order. An unambiguous instruction for a previously shown offer at unchanged terms can proceed immediately under the wallet policy; a changed price or unclear selection is shown as an exact quote for confirmation in chat. A purchase above the auto-approval limit pauses for separate MFA approval and resumes in chat. Insufficient funds saves the purchase and directs the consumer to PayPal Sandbox top-up. **Resume purchase** refreshes the quote and continues only if the authorized terms still match; changed price, refund terms, or fulfillment requires another confirmation. Conversation history and purchase state belong to the signed-in consumer; repeated chat request IDs cannot create a second payment. **Connect AI** remains available for external MCP clients.
 
-To enable chat, set `DEEPSEEK_API_KEY` on the API service (or in the local API process environment). `DEEPSEEK_MODEL` defaults to `deepseek-flash` and can be changed to another [supported DeepSeek model](https://api-docs.deepseek.com/api/create-response/). Keep the key on the API server; do not place it in a `NEXT_PUBLIC_` variable or the browser app. The app calls the [DeepSeek Responses API](https://api-docs.deepseek.com/guides/responses_api/) with a bounded function-tool loop for catalog search, shopping memory, wallet and order reads, purchase preparation, and order-action review. PAYL validates the selection and executes all financial operations on the server. Without a key, new generated answers and offer selections are unavailable; the rest of the sandbox still runs.
+To enable chat, set `DEEPSEEK_API_KEY` on the API service (or in the local API process environment). `DEEPSEEK_MODEL` defaults to `deepseek-flash` and can be changed to another [supported DeepSeek model](https://api-docs.deepseek.com/api/create-response/). Keep the key on the API server; do not place it in a `NEXT_PUBLIC_` variable or the browser app. The app calls the [DeepSeek Responses API](https://api-docs.deepseek.com/guides/responses_api/) with a bounded function-tool loop for catalog search, shopping memory, wallet and order reads, purchase preparation, and order-action review. Antspace validates the selection and executes all financial operations on the server. Without a key, new generated answers and offer selections are unavailable; the rest of the sandbox still runs.
 
-For checkout, ask the assistant to buy a named or previously listed offer, or use an offer card's **Review checkout** action. PAYL applies the existing wallet limits. If human approval is required, complete the separate MFA approval and return to the chat to finish the order. Price and terms come from the signed quote rather than the generated answer. The current retrieval corpus is the structured live catalog; add a search index or embeddings when the catalog and merchant content outgrow that approach. Chat purchases currently handle one fixed-price digital offer per order.
+For checkout, ask the assistant to buy a named or previously listed offer, or use an offer card's **Review checkout** action. Antspace applies the existing wallet limits. If human approval is required, complete the separate MFA approval and return to the chat to finish the order. Price and terms come from the signed quote rather than the generated answer. The current retrieval corpus is the structured live catalog; add a search index or embeddings when the catalog and merchant content outgrow that approach. Chat purchases currently handle one fixed-price digital offer per order.
 
 The merchant dashboard supports merchant self-registration at `http://localhost:3001/register` and multiple products under **Products**. Registration atomically provisions an isolated merchant identity, USD payable account, product catalog, signing identity, and merchant-specific MCP endpoint. A merchant creates a fixed-price digital product, chooses digital-service or digital-download fulfillment, can mark it refundable for 1 hour through 365 days, and can publish or hide it. Refund terms are signed into each quote, so later product changes do not alter an existing order. Published products immediately appear in `commerce.search_offers` through that merchant's MCP server.
 
@@ -122,31 +126,31 @@ Merchants do not manually create a paid order. Orders are generated from authori
 1. The consumer's AI calls `commerce.search_offers` and selects a product.
 2. The AI calls `commerce.create_quote` for that product and quantity.
 3. The AI sends the unchanged signed quote to `payment.prepare` on the consumer wallet.
-4. PAYL applies the consumer's policy and obtains human approval when required.
+4. Antspace applies the consumer's policy and obtains human approval when required.
 5. The AI sends the resulting single-use mandate and signed quote to `commerce.commit_order`.
-6. PAYL captures the reservation into pending merchant revenue and creates the order.
+6. Antspace captures the reservation into pending merchant revenue and creates the order.
 7. Downloads with an attached file fulfill immediately. Orders without a file stay pending. Services collect any merchant-configured requirements in chat; the merchant uploads the completed result and selects **Deliver to buyer**. Fulfillment requires an attached file and any requested buyer requirements.
 8. Fulfillment moves pending revenue to payable, starts the snapshotted refund window, and produces the signed receipt.
 
-Before fulfillment, the consumer may call `commerce.cancel_order` or use **Cancel order** in the dashboard. PAYL atomically returns the gross amount to the consumer and reverses both pending merchant revenue and PAYL's fee. `payment.cancel` separately releases an unused reservation or cancels a pending approval. The background lifecycle worker performs the same safe release when authority or fulfillment expires.
+Before fulfillment, the consumer may call `commerce.cancel_order` or use **Cancel order** in the dashboard. Antspace atomically returns the gross amount to the consumer and reverses both pending merchant revenue and Antspace's fee. `payment.cancel` separately releases an unused reservation or cancels a pending approval. The background lifecycle worker performs the same safe release when authority or fulfillment expires.
 
-An eligible consumer can refund the order from **Activity** or through `payment.request_refund` on the unified `payl` MCP connection. PAYL returns the full captured amount to the consumer, debits the merchant by that gross amount, and retains the original PAYL fee. Refunds are full-order, immediate, signed, auditable, and idempotent. A merchant whose refundable order is returned can therefore show a negative payable balance equal to the retained fee.
+An eligible consumer can refund the order from **Activity** or through `payment.request_refund` on the unified `payl` MCP connection. Antspace returns the full captured amount to the consumer, debits the merchant by that gross amount, and retains the original Antspace fee. Refunds are full-order, immediate, signed, auditable, and idempotent. A merchant whose refundable order is returned can therefore show a negative payable balance equal to the retained fee.
 
 The merchant **Settlement** workspace separates pending fulfillment revenue, payout eligible payable, pending PayPal withdrawal, and reserve. A withdrawal retains 10% in reserve and holds the remaining amount until PayPal Sandbox confirms the payout item. Failure or return restores the original payable amount. Refunds after payout consume reserve first and leave any remaining merchant liability visible. Reconciliation includes pending withdrawals. Merchant dashboards also expose quote conversion, approval latency, fulfillment status, refunds, webhook backlog, payout count, audit coverage, and journal integrity.
 
 Merchants can configure an HTTPS webhook in **Settlement**. Order, cancellation, refund, fulfillment, and payout events are written to a durable outbox in the same transaction as the business state. Delivery uses `x-payl-timestamp` plus `x-payl-signature: v1=<HMAC-SHA256>` and retries failures up to eight times. The signing secret is shown only when the webhook is created or rotated.
 
-## Connect PAYL to Codex or another MCP client
+## Connect Antspace to Codex or another MCP client
 
 This repository includes `.codex/config.toml` with one project-scoped Streamable HTTP connection. The single `payl` server combines the consumer wallet and the multi-merchant commerce network at `http://localhost:4100/mcp`.
 
-After starting PAYL with `pnpm dev`, open the consumer dashboard's **Connect AI** tab, copy the Codex setup, trust the repository, and restart Codex or open a new Codex task. In Codex, use `/mcp` or **Settings → MCP servers** to add the one PAYL server. PAYL returns protected-resource metadata, Codex opens the consumer login and consent flow, and write-capable tools retain the `writes` approval mode.
+After starting Antspace with `pnpm dev`, open the consumer dashboard's **Connect AI** tab, copy the Codex setup, trust the repository, and restart Codex or open a new Codex task. In Codex, use `/mcp` or **Settings → MCP servers** to add the one Antspace server. Antspace returns protected-resource metadata, Codex opens the consumer login and consent flow, and write-capable tools retain the `writes` approval mode.
 
 The same quick-start instructions are available at `http://localhost:4100/docs/mcp` locally or at the hosted API's `/docs/mcp` URL.
 
 Refunds use the separate `wallet:refund` OAuth permission. Connections authorized before this scope was added must be revoked and reconnected before `payment.request_refund` can be called; dashboard refunds continue to use the signed-in consumer session.
 
-To configure another OAuth-capable MCP client, register the single Streamable HTTP URL. Clients discover PAYL's OAuth authorization server, dynamically register a client, use authorization code with PKCE, and receive audience-bound bearer tokens for `http://localhost:4100/mcp`. New merchants and products appear automatically; the consumer does not add or authorize another MCP server.
+To configure another OAuth-capable MCP client, register the single Streamable HTTP URL. Clients discover Antspace's OAuth authorization server, dynamically register a client, use authorization code with PKCE, and receive audience-bound bearer tokens for `http://localhost:4100/mcp`. New merchants and products appear automatically; the consumer does not add or authorize another MCP server.
 
 ### Test quotes across multiple merchants
 
@@ -163,14 +167,14 @@ For a remote AI client, ChatGPT plugin, or hosted Codex environment, `localhost`
 ## Implemented transaction slice
 
 ```text
-consumer MCP client -> PAYL commerce MCP -> registered merchant -> signed quote
-consumer MCP client -> PAYL wallet MCP -> policy + approval
-PAYL -> signed single-use mandate -> merchant commerce MCP
+consumer MCP client -> Antspace commerce MCP -> registered merchant -> signed quote
+consumer MCP client -> Antspace wallet MCP -> policy + approval
+Antspace -> signed single-use mandate -> merchant commerce MCP
 digital download merchant -> atomic capture + fulfillment -> signed order receipt
 merchant -> async fulfillment -> pending revenue becomes payable + signed receipt
 consumer/system -> cancellation or expiry -> atomic release/reversal
 consumer -> policy-eligible full refund -> merchant gross debit + signed refund receipt
-consumer -> PayPal Sandbox top-up -> full PAYL wallet credit
+consumer -> PayPal Sandbox top-up -> full Antspace wallet credit
 merchant -> reserve-backed PayPal Sandbox withdrawal -> reconciliation report
 ```
 
@@ -180,13 +184,13 @@ The local identity provider, seeded passwords, TOTP secret, and deterministic si
 
 ## What “direct AI payment through MCP” means
 
-MCP carries the commerce interaction between the consumer's AI host and PAYL's registered merchant network. It does not itself settle money.
+MCP carries the commerce interaction between the consumer's AI host and Antspace's registered merchant network. It does not itself settle money.
 
-- **One-time consumer connection:** consumer AI ↔ PAYL commerce MCP network.
+- **One-time consumer connection:** consumer AI ↔ Antspace commerce MCP network.
 - **Dynamic merchant routing:** merchant registration and product publication make the merchant discoverable without consumer reconfiguration.
 - **Direct commercial agreement:** signed merchant quote ↔ signed consumer payment mandate.
-- **Money movement:** PAYL's ledger and a licensed bank, mobile-money, issuer, or payment partner.
-- **Merchant settlement:** merchant PAYL balance or payout to the merchant's bank account.
+- **Money movement:** Antspace's ledger and a licensed bank, mobile-money, issuer, or payment partner.
+- **Merchant settlement:** merchant Antspace balance or payout to the merchant's bank account.
 
 This keeps the user experience agent-to-agent while preserving regulated custody, settlement, disputes, and safeguarding.
 
@@ -204,7 +208,7 @@ This keeps the user experience agent-to-agent while preserving regulated custody
 
 The chat saves a per-conversation shopping brief (topic, preferences, budget, refund requirement, product type, and whether to confirm before buying). The brief stays visible above the transcript and survives the recent-message context window. Tell the assistant to change a requirement or select **Clear brief**. Requirements guide search and are checked against the signed quote before payment; they do not override wallet policy. Conditional or withheld purchase consent requires an explicit quote confirmation.
 
-Ask “How much can I spend?”, “Show my orders and downloads”, or “Check order …”. Wallet and order cards use authenticated PAYL records. Eligible cancellations and refunds are proposed in chat and executed only after confirming the specific order action. Refunds credit the PAYL wallet under the existing refund rules; PayPal remains the funding and withdrawal rail. Service requirements can be submitted directly in the order card or prepared from the consumer's exact chat message for review. Progress messages stream from the API as each search, policy check, and order action runs. Model calls are bounded to five rounds and twelve tool calls per message.
+Ask “How much can I spend?”, “Show my orders and downloads”, or “Check order …”. Wallet and order cards use authenticated Antspace records. Eligible cancellations and refunds are proposed in chat and executed only after confirming the specific order action. Refunds credit the Antspace wallet under the existing refund rules; PayPal remains the funding and withdrawal rail. Service requirements can be submitted directly in the order card or prepared from the consumer's exact chat message for review. Progress messages stream from the API as each search, policy check, and order action runs. Model calls are bounded to five rounds and twelve tool calls per message.
 
 ### Merchant delivery files
 
@@ -220,7 +224,7 @@ Files are stored in Postgres, with a 5 MB file limit and 100 MB total per mercha
 - Order commitment, payment verification, fulfillment status, and receipts.
 - Merchant balance, settlement, reconciliation, and refund tools.
 
-### PAYL trust and settlement core
+### Antspace trust and settlement core
 
 - Consumer, merchant, and agent identity.
 - Quote and mandate signatures.
@@ -234,7 +238,7 @@ Start with a narrow group of digital goods or services that have fixed pricing a
 
 The first sandbox should contain:
 
-- One PAYL consumer-wallet MCP server.
+- One Antspace consumer-wallet MCP server.
 - One merchant gateway capable of hosting multiple test merchants.
 - Three to five pilot merchants in one category.
 - A controlled consumer cohort.

@@ -1020,7 +1020,7 @@ export class PaylService {
       )).rows[0];
       if (duplicate) return this.loadOrderStatus(client, duplicate.id, input.merchantId);
 
-      if (storedMandate.jws !== mandate.jws) throw new DomainError("MANDATE_TAMPERED", "Mandate does not match the PAYL record");
+      if (storedMandate.jws !== mandate.jws) throw new DomainError("MANDATE_TAMPERED", "Mandate does not match the Antspace record");
       if (storedMandate.status !== "reserved") throw new DomainError("MANDATE_ALREADY_USED", "Mandate is not available for capture");
       if (storedMandate.expires_at.getTime() <= Date.now()) throw new DomainError("MANDATE_EXPIRED", "Mandate has expired");
       if (storedMandate.merchant_id !== input.merchantId || mandate.payload.merchantId !== input.merchantId) {
@@ -1937,7 +1937,7 @@ export class PaylService {
       const available = requireValue(accounts.rows.find((item) => item.owner_type === "consumer")?.id,
         "TOPUP_ACCOUNT_MISSING", "Consumer wallet is missing");
       const clearing = requireValue(accounts.rows.find((item) => item.owner_type === "platform")?.id,
-        "TOPUP_ACCOUNT_MISSING", "PAYL clearing account is missing");
+        "TOPUP_ACCOUNT_MISSING", "Antspace clearing account is missing");
       await postJournal(client, {
         eventType: "paypal_topup_reversal", idempotencyKey: `paypal-reversal:${eventId}`,
         referenceType: "topup", referenceId: row.id,

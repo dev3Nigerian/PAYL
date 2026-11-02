@@ -11,11 +11,11 @@ type ApiBody = Record<string, unknown> & {
 
 async function readApiBody(response: Response): Promise<ApiBody> {
   const text = await response.text();
-  if (!text.trim()) return { error: { code: "UPSTREAM_EMPTY_RESPONSE", message: "PAYL API returned an empty response" } };
+  if (!text.trim()) return { error: { code: "UPSTREAM_EMPTY_RESPONSE", message: "Antspace API returned an empty response" } };
   try {
     return JSON.parse(text) as ApiBody;
   } catch {
-    return { error: { code: "UPSTREAM_INVALID_RESPONSE", message: "PAYL API returned an invalid response" } };
+    return { error: { code: "UPSTREAM_INVALID_RESPONSE", message: "Antspace API returned an invalid response" } };
   }
 }
 

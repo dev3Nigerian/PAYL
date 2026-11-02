@@ -88,7 +88,7 @@ export default function PayPalTopup({ clientId, topups, offline }: { clientId: s
             await jsonRequest<Topup>(`/api/consumer/topups/${encodeURIComponent(topupId.current)}/cancel`, "POST").catch(() => undefined);
           }
           setLockedMinor(null);
-          setNotice({ kind: "ok", message: "PayPal funding was cancelled. Your PAYL balance was not changed." });
+          setNotice({ kind: "ok", message: "PayPal funding was cancelled. Your Antspace balance was not changed." });
         },
         onError: (error) => setNotice({ kind: "error", message: error.message || "PayPal funding could not be completed" }),
       });
@@ -135,7 +135,7 @@ export default function PayPalTopup({ clientId, topups, offline }: { clientId: s
     try {
       const result = await jsonRequest<Topup>(`/api/consumer/topups/${encodeURIComponent(id)}`, "GET");
       if (result.status === "completed") window.location.reload();
-      else setNotice({ kind: "ok", message: `Top-up is ${result.status}. PAYL will credit your balance after PayPal confirms capture.` });
+      else setNotice({ kind: "ok", message: `Top-up is ${result.status}. Antspace will credit your balance after PayPal confirms capture.` });
     } catch (error) {
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "Status could not be checked" });
     } finally { setChecking(null); }
@@ -143,8 +143,8 @@ export default function PayPalTopup({ clientId, topups, offline }: { clientId: s
 
   return <article className="dashboard-panel paypal-topup-panel">
     <p className="section-label">PayPal Sandbox</p>
-    <h2>Add funds to PAYL</h2>
-    <p className="form-intro">Pay with a PayPal Sandbox buyer account. PAYL credits the full captured amount to your sandbox wallet.</p>
+    <h2>Add funds to Antspace</h2>
+    <p className="form-intro">Pay with a PayPal Sandbox buyer account. Antspace credits the full captured amount to your sandbox wallet.</p>
     {!clientId || offline ? <p className="empty-state">PayPal funding is unavailable until the sandbox account is configured.</p> : <>
       <form onSubmit={start} className="paypal-topup-form">
         <label htmlFor="paypal-topup-amount">Amount in USD</label>
@@ -156,7 +156,7 @@ export default function PayPalTopup({ clientId, topups, offline }: { clientId: s
     {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
     <div className="paypal-topup-history"><h3>Funding history</h3>
       {topups.length === 0 ? <p className="empty-state">No PayPal top-ups yet.</p> : topups.map((topup) => <div className="paypal-topup-row" key={topup.topupId}>
-        <div><strong>{money(topup.amountMinor)}</strong><span>{topup.status.replaceAll("_", " ")} · {new Date(topup.createdAt).toLocaleString("en-US")}</span>{topup.paypalCaptureId && <small>PayPal capture {topup.paypalCaptureId}</small>}{Number(topup.reversedAmountMinor) > 0 && <small>Reversed: {money(topup.reversedAmountMinor)}</small>}{Number(topup.providerFeeMinor) > 0 && <small>PayPal fee paid by PAYL: {money(topup.providerFeeMinor)}</small>}</div>
+        <div><strong>{money(topup.amountMinor)}</strong><span>{topup.status.replaceAll("_", " ")} · {new Date(topup.createdAt).toLocaleString("en-US")}</span>{topup.paypalCaptureId && <small>PayPal capture {topup.paypalCaptureId}</small>}{Number(topup.reversedAmountMinor) > 0 && <small>Reversed: {money(topup.reversedAmountMinor)}</small>}{Number(topup.providerFeeMinor) > 0 && <small>PayPal fee paid by Antspace: {money(topup.providerFeeMinor)}</small>}</div>
         {topup.status === "pending" && <button className="secondary-button" type="button" disabled={checking === topup.topupId} onClick={() => void checkStatus(topup.topupId)}>{checking === topup.topupId ? "Checking…" : "Check status"}</button>}
       </div>)}
     </div>
