@@ -36,7 +36,7 @@ export default function LoginForm({ demoEmail, demoPassword, prefilled, homeUrl,
     {error && <p className="form-notice error" role="alert">{error}</p>}
     {busy && <p className="fineprint" role="status">Connecting to PAYL. If the sandbox was asleep, this may take up to a minute.</p>}
     <button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in to your business"}<Icon name="arrow" size={16} /></button>
-    <small>{prefilled ? "Sandbox credentials are prefilled for local testing." : "Use the credentials supplied by the sandbox owner."}</small>
+    <small>{prefilled ? "Sandbox credentials are prefilled for local testing." : "Use the email and password you registered for your business."}</small>
     <a className="auth-link" href="/register">New to PAYL? Create a merchant account</a>
   </form></AuthShell>;
 }

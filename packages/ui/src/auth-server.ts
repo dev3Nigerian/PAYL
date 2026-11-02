@@ -9,6 +9,25 @@ const MAX_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 15_000;
 const TRANSIENT_STATUSES = new Set([502, 503, 504]);
 
+// Check the API before skipping a form: an expired cookie must not cause a
+// login -> dashboard -> login redirect loop. Failures leave sign-in available.
+export async function hasActiveWebSession(apiUrl: string, token: string | undefined, role: "consumer" | "merchant_admin"): Promise<boolean> {
+  if (!token) return false;
+  try {
+    const response = await fetch(new URL("/api/auth/session", apiUrl), {
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) return false;
+    const session: unknown = await response.json();
+    return isObject(session) && typeof session.userId === "string" && session.userId.length > 0 && session.role === role;
+  } catch {
+    return false;
+  }
+}
+
 function isObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

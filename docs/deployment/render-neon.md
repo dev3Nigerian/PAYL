@@ -5,7 +5,7 @@ This deployment is for product demonstrations with simulated funds. It is not ap
 ## Architecture
 
 - `payl-api-dev3nigerian`: Express API, OAuth authorization server, unified consumer MCP endpoint plus compatibility endpoints, migrations, lifecycle processing, and webhook delivery.
-- `payl-consumer-dev3nigerian`: consumer wallet and approval dashboard.
+- `payl-consumer-dev3nigerian`: shared public landing page, consumer registration, wallet, and approval dashboard.
 - `payl-merchant-dev3nigerian`: merchant registration, catalog, orders, and settlement dashboard.
 - Neon: persistent PostgreSQL database using its pooled TLS connection.
 
@@ -89,6 +89,10 @@ The API applies migrations and provisions the initial simulated wallet, merchant
 Use the existing Blueprint so the upgrade applies to the existing services. This compute-only change needs no new environment variables, database migrations, or database reset. If the services were created individually and are not managed by a Blueprint, change each existing service's compute plan to Starter in Render, or follow Render's instructions for adding existing resources to a Blueprint.
 
 ## 5. Verify the deployment
+
+Share `https://payl-consumer-dev3nigerian.onrender.com/` as the single public entry link. **Shop with AI** opens consumer registration with the $100 sandbox welcome credit; **Sell on PAYL** opens merchant registration. Returning users have a sign-in link for each role. The merchant site's bare root redirects to the same public landing page, and both dashboards remain at their own `/dashboard` routes. A verified existing session skips login/registration in that workspace. The landing page remains accessible from every PAYL logo.
+
+For the shared-entry update, redeploy **both web services**. No new environment variables or database migrations are needed. Existing `MERCHANT_WEB_URL` and `APPROVAL_WEB_URL` values control cross-workspace links; if using custom domains, set them to the corresponding web origins.
 
 Consumer self-registration is available at `https://payl-consumer-dev3nigerian.onrender.com/register`. Redeploy the API and consumer web service for this feature. API startup applies `0013_consumer_mfa_enrollment.sql`; it adds pending authenticator enrollment storage without changing existing accounts. No new environment variables or database reset are needed.
 
