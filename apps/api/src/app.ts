@@ -371,6 +371,12 @@ export function createApp(
       response.set("cache-control", "no-store").json({ orders: await service.delivery.orders(requireConsumerId(session)) });
     } catch (error) { next(error); }
   });
+  app.get("/api/consumer/downloads", async (request, response, next) => {
+    try {
+      const session = await requireWebSession(request, identity, "consumer");
+      response.set("cache-control", "private, no-store").json(await service.delivery.downloads(requireConsumerId(session), request.query.cursor));
+    } catch (error) { next(error); }
+  });
   app.get("/api/consumer/orders/:orderId/download", async (request, response, next) => {
     try {
       const session = await requireWebSession(request, identity, "consumer");

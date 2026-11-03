@@ -8,6 +8,8 @@ Antspace is the customer-facing name of the PAYL project. The existing `@payl/*`
 
 The public domains are `antspace.online` for the shared entry and shopper workspace and `merchants.antspace.online` for sellers. The Blueprint and production navigation use these domains. See the [domain connection guide](docs/deployment/antspace-domain.md) for DNS, environment settings, and verification. The original Render addresses remain available during DNS propagation.
 
+After buying, open **My downloads** in the shopper dashboard to download delivered files, including older purchases. **Orders & activity** also has a download button on each fulfilled order with an attached file. The library refreshes when opened and supports loading older files; it does not require AI chat. Downloads remain private to the purchasing account and become unavailable after a refund or cancellation.
+
 ## Product thesis
 
 Antspace will be a two-sided payment and commerce network for consumers and merchants:

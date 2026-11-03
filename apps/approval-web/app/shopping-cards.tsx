@@ -49,7 +49,7 @@ function OrderCard({ order, disabled, onMessage, onDetails }: {
     <p>{order.merchantName} · <strong>{order.status.replaceAll("_", " ")}</strong></p>
     <small className="shop-order-id">{order.orderId}</small>
     {order.status === "confirmed" && order.fulfillmentDeadline && <small>Merchant delivery due {new Date(order.fulfillmentDeadline).toLocaleString()}</small>}
-    {order.delivery && <a className="primary-button" href={`/api/consumer/orders/${encodeURIComponent(order.orderId)}/download`}>Download {order.delivery.fileName}</a>}
+    {order.delivery && <><a className="primary-button" href={`/api/consumer/orders/${encodeURIComponent(order.orderId)}/download`} download={order.delivery.fileName}>Download {order.delivery.fileName}</a><small>Find this file again in <a href="#downloads">My downloads</a>.</small></>}
     {order.status === "fulfilled" && !order.delivery && <small>No downloadable file was attached to this older order.</small>}
     {order.serviceDetails && <details><summary>Your submitted requirements</summary><p className="service-details-text">{order.serviceDetails}</p></details>}
     {order.status === "confirmed" && order.serviceIntakePrompt && !order.serviceDetails && <form className="service-intake" onSubmit={(event) => void submit(event)}>

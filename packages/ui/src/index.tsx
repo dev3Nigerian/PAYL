@@ -7,6 +7,7 @@ const paths = {
   grid: "M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7Z",
   box: "m12 3 9 5v9l-9 5-9-5V8l9-5Zm0 10v9M3 8l9 5 9-5M7.5 5.5l9 5V15",
   settlement: "M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5",
+  download: "M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5",
   shield: "m12 3 8 3v5c0 5-4 8-8 10-4-2-8-5-8-10V6l8-3Zm-4 9 3 3 5-6",
   connect: "m9 15 6-6M8 16l-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 10a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-1 1",
   arrow: "M4 12h16m-6-6 6 6-6 6",

@@ -2297,6 +2297,7 @@ export class PaylService {
         merchant_name: string;
         offer_id: string;
         offer_name: string;
+        delivery_file_name: string | null;
         fulfillment_reference: string | null;
         fulfillment_deadline: Date | null;
         fulfilled_at: Date | null;
@@ -2312,13 +2313,14 @@ export class PaylService {
                 m.name AS merchant_name, f.id AS offer_id, f.name AS offer_name,
                 o.fulfillment_reference, o.fulfillment_deadline, o.fulfilled_at,
                 o.cancelled_at, o.cancellation_reason, o.refundable, o.refund_eligible_until,
-                o.refunded_at, r.retained_fee_minor::text, o.created_at
+                o.refunded_at, r.retained_fee_minor::text, o.created_at, a.file_name AS delivery_file_name
          FROM orders o
          JOIN payment_intents p ON p.id = o.payment_id
          JOIN merchants m ON m.id = o.merchant_id
          JOIN quotes q ON q.id = o.quote_id
          JOIN offers f ON f.id = q.offer_id
          LEFT JOIN refunds r ON r.order_id = o.id
+         LEFT JOIN delivery_assets a ON a.id = o.delivery_asset_id
          WHERE p.consumer_id = $1
          ORDER BY o.created_at DESC LIMIT 50`,
         [consumerId],
@@ -2333,6 +2335,7 @@ export class PaylService {
       topups,
       orders: orders.rows.map((row) => ({
         ...row,
+        delivery: row.status === "fulfilled" && row.delivery_file_name ? { fileName: row.delivery_file_name } : null,
         created_at: row.created_at.toISOString(),
         fulfillment_deadline: row.fulfillment_deadline?.toISOString() ?? null,
         fulfilled_at: row.fulfilled_at?.toISOString() ?? null,

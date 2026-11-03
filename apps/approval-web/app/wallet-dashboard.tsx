@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, useTransition, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { Icon, StatusBadge } from "@payl/ui";
 import { DashboardNavigation, useDashboardTab, type NavigationItem } from "@payl/ui/navigation";
 import ShopWithAi from "./shop-with-ai";
 import PayPalTopup, { type Topup } from "./paypal-topup";
 import MfaSetup from "./mfa-setup";
+import MyDownloads from "./my-downloads";
 
 export type Policy = {
   version: number;
@@ -34,6 +36,7 @@ export type WalletState = {
     currency: string;
     merchant_name: string;
     offer_name?: string;
+    delivery?: { fileName: string } | null;
     fulfillment_deadline: string | null;
     fulfilled_at: string | null;
     cancelled_at: string | null;
@@ -57,12 +60,13 @@ export type Connection = {
 
 export type McpEndpoints = { consumer: string };
 
-type Tab = "wallet" | "shop" | "connect" | "activity" | "permissions" | "security";
+type Tab = "wallet" | "shop" | "connect" | "activity" | "downloads" | "permissions" | "security";
 
 const tabs: NavigationItem<Tab>[] = [
   { id: "shop", label: "Shop with AI", icon: "sparkles" },
   { id: "wallet", label: "My wallet", icon: "wallet" },
   { id: "activity", label: "Orders & activity", icon: "orders" },
+  { id: "downloads", label: "My downloads", icon: "download" },
   { id: "permissions", label: "Spending controls", icon: "settings" },
   { id: "connect", label: "Connected AI", icon: "connect" },
   { id: "security", label: "Security", icon: "shield" },
@@ -120,7 +124,10 @@ function ActivityList({
   return <div className="activity-list">{state.orders.map((order) => (
     <div className="activity-row" key={order.id}>
       <div className={order.status === "refunded" || order.status === "cancelled" ? "activity-icon refunded" : "activity-icon"}>{order.status === "refunded" ? "RF" : order.status === "cancelled" ? "CX" : "AI"}</div>
-      <div><strong>{order.offer_name ?? order.merchant_name}</strong><span>{order.merchant_name} · {new Date(order.created_at).toLocaleString("en-US")}</span><small className="refund-detail">{refundLabel(order)}</small></div>
+      <div className="activity-product"><strong>{order.offer_name ?? order.merchant_name}</strong><span>{order.merchant_name} · {new Date(order.created_at).toLocaleString("en-US")}</span><small className="refund-detail">{refundLabel(order)}</small>
+        {order.status === "fulfilled" && order.delivery && <a className="secondary-button order-download" href={`/api/consumer/orders/${encodeURIComponent(order.id)}/download`} download={order.delivery.fileName} aria-label={`Download ${order.offer_name ?? order.merchant_name} (${order.delivery.fileName})`}><Icon name="download" size={15} />Download file</a>}
+        {order.status === "fulfilled" && !order.delivery && <small className="delivery-unavailable">No downloadable file attached to this order.</small>}
+      </div>
       <div className="activity-amount"><strong>{order.status === "refunded" || order.status === "cancelled" ? "+" : "-"}{money(order.captured_amount_minor, order.currency)}</strong><StatusBadge status={order.status} />{order.status === "confirmed" && <button className="refund-button" type="button" disabled={cancelling === order.id} onClick={() => onCancel(order)}>{cancelling === order.id ? "Cancelling…" : "Cancel order"}</button>}{order.status === "fulfilled" && order.refundable && order.refund_eligible_until && new Date(order.refund_eligible_until).getTime() >= Date.now() && <button className="refund-button" type="button" disabled={refunding === order.id} onClick={() => onRefund(order)}>{refunding === order.id ? "Refunding…" : "Refund purchase"}</button>}</div>
     </div>
   ))}</div>;
@@ -241,6 +248,11 @@ function ConnectAiPanel({
 
 export default function WalletDashboard({ initialState, mcpEndpoints, merchantUrl }: { initialState: WalletState | null; mcpEndpoints: McpEndpoints; merchantUrl: string }) {
   const [tab, setTab] = useDashboardTab(tabs, "shop");
+  const router = useRouter();
+  const [refreshingOrders, startRefresh] = useTransition();
+  useEffect(() => {
+    if (tab === "activity") startRefresh(() => router.refresh());
+  }, [tab, router]);
   const [policy, setPolicy] = useState<Policy | null>(initialState?.policy ?? null);
   const [connections, setConnections] = useState(initialState?.connections ?? []);
   const [draft, setDraft] = useState(() => ({
@@ -352,6 +364,7 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
     shop: ["Your personal shopping companion", "A good find starts here."],
     connect: ["Bring your own assistant", "Connected AI"],
     activity: ["Every purchase, in one place", "Orders & activity"],
+    downloads: ["Good finds, ready to use", "My downloads"],
     permissions: ["A little autonomy. A lot of control.", "Your spending rules"],
     security: ["Built around your control", "Wallet security"],
   };
@@ -391,10 +404,13 @@ export default function WalletDashboard({ initialState, mcpEndpoints, merchantUr
 
         {tab === "shop" && <ShopWithAi consumerRef={initialState?.wallet.consumerRef ?? "consumer_demo"} offline={!initialState} onAddFunds={() => setTab("wallet")} />}
 
+        {tab === "downloads" && <MyDownloads />}
+
         {tab === "connect" && <ConnectAiPanel endpoint={mcpEndpoints.consumer} connections={connections} onRevoke={(clientId, resource) => void revokeConnection(clientId, resource)} />}
 
         {tab === "activity" && <article className="dashboard-panel section-panel">
-          <div className="panel-title"><div><p className="section-label">Your purchase history</p><h2>All orders</h2></div><span>{initialState?.orders.length ?? 0} total</span></div>
+          <div className="panel-title orders-heading"><div><p className="section-label">Your purchase history</p><h2>Recent orders</h2></div><div className="orders-toolbar"><a className="secondary-button" href="#downloads"><Icon name="download" size={16} />My downloads</a><button className="text-button" type="button" disabled={refreshingOrders} onClick={() => startRefresh(() => router.refresh())}>{refreshingOrders ? "Refreshing…" : "Refresh orders"}</button></div></div>
+          <p className="orders-help">Ready files can be downloaded below. Find older downloads in <a href="#downloads">My downloads</a>.</p>
           {notice && <p className={`form-notice ${notice.kind}`}>{notice.message}</p>}
           <ActivityList state={initialState} onRefund={(order) => void refundOrder(order)} onCancel={(order) => void cancelOrder(order)} refunding={refunding} cancelling={cancelling} />
           <div className="paypal-topup-history"><h3>PayPal funding</h3>

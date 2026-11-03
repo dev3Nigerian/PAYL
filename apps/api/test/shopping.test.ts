@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
+import { PaymentMandateSchema } from "@payl/contracts";
 import { loadConfig } from "../src/config.js";
 import { createPool } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
@@ -152,6 +153,8 @@ describe("complete shopping conversations", () => {
     const bought = await buy();
     const orderId = bought.message.action.orderId as string;
     expect(bought.message.details.orders[0].delivery.fileName).toBe("market-research-sample.txt");
+    const available = await request(app).get("/api/consumer/downloads").set("authorization", `Bearer ${token}`).expect(200);
+    expect(available.body.downloads).toMatchObject([{ orderId, fileName: "market-research-sample.txt" }]);
     await request(app).get(`/api/consumer/orders/${orderId}/download`).set("authorization", `Bearer ${token}`).expect(200);
     await request(app).get(`/api/consumer/orders/${orderId}/download`).expect(401);
     modelSequence([tool("request_order_action", { operation: "refund", orderId })]);
@@ -165,8 +168,82 @@ describe("complete shopping conversations", () => {
     expect((await pool.query("SELECT id FROM refunds")).rowCount).toBe(1);
     expect((await service.walletSummary(config.sandboxConsumerId)).balances).toMatchObject({ available: "100000" });
     await request(app).get(`/api/consumer/orders/${orderId}/download`).set("authorization", `Bearer ${token}`).expect(404);
+    const library = await request(app).get("/api/consumer/downloads").set("authorization", `Bearer ${token}`).expect(200);
+    expect(library.body).toEqual({ downloads: [], nextCursor: null });
+    const dashboard = await request(app).get("/api/consumer/dashboard").set("authorization", `Bearer ${token}`).expect(200);
+    expect(dashboard.body.orders[0]).toMatchObject({ id: orderId, status: "refunded", delivery: null });
     await balanced();
   });
+
+  it("exposes purchased files in the dashboard and library only to their owner after fulfillment", async () => {
+    const digital = await buy();
+    const readyId = digital.message.action.orderId as string;
+    const pending = await buy("offer_brand_review", "Buy AI Brand Review under $150");
+    const pendingId = pending.message.action.orderId as string;
+    await service.delivery.upload(config.sandboxMerchantId, { orderId: pendingId }, "unfinished-review.txt", Buffer.from("Not fulfilled yet"));
+    const library = await request(app).get("/api/consumer/downloads").set("authorization", `Bearer ${token}`).expect(200);
+    expect(library.headers["cache-control"]).toBe("private, no-store");
+    expect(library.body.nextCursor).toBeNull();
+    expect(library.body.downloads).toHaveLength(1);
+    expect(library.body.downloads[0]).toMatchObject({ orderId: readyId, offerName: "Market Research Pack", fileName: "market-research-sample.txt" });
+    expect(library.body.downloads[0].sizeBytes).toBeGreaterThan(0);
+    expect(library.body.downloads[0]).not.toHaveProperty("contents");
+    const dashboard = await request(app).get("/api/consumer/dashboard").set("authorization", `Bearer ${token}`).expect(200);
+    expect(dashboard.body.orders.find((order: { id: string }) => order.id === readyId).delivery).toEqual({ fileName: "market-research-sample.txt" });
+    expect(dashboard.body.orders.find((order: { id: string }) => order.id === pendingId).delivery).toBeNull();
+    await request(app).get(`/api/consumer/orders/${pendingId}/download`).set("authorization", `Bearer ${token}`).expect(404);
+    await request(app).get("/api/consumer/downloads").expect(401);
+    await request(app).get("/api/consumer/downloads").set("authorization", `Bearer ${merchantToken}`).expect(403);
+    await request(app).get("/api/consumer/downloads?cursor=").set("authorization", `Bearer ${token}`).expect(400);
+    await request(app).get("/api/consumer/downloads?cursor=one&cursor=two").set("authorization", `Bearer ${token}`).expect(400);
+    const other = await request(app).post("/api/auth/register/consumer").send({
+      displayName: "Another shopper", email: "download-owner@example.test", password: "AnotherShopper!2026",
+    }).expect(201);
+    const otherLibrary = await request(app).get("/api/consumer/downloads").set("authorization", `Bearer ${other.body.sessionToken}`).expect(200);
+    expect(otherLibrary.body).toEqual({ downloads: [], nextCursor: null });
+    await request(app).get(`/api/consumer/downloads?cursor=${readyId}`).set("authorization", `Bearer ${other.body.sessionToken}`).expect(404);
+    await request(app).get(`/api/consumer/orders/${readyId}/download`).set("authorization", `Bearer ${other.body.sessionToken}`).expect(404);
+    // Historical fulfilled orders with no attached asset cannot advertise a download.
+    await pool.query("UPDATE orders SET delivery_asset_id = NULL WHERE id = $1", [readyId]);
+    expect((await service.delivery.downloads(config.sandboxConsumerId)).downloads).toEqual([]);
+    const legacy = await request(app).get("/api/consumer/dashboard").set("authorization", `Bearer ${token}`).expect(200);
+    expect(legacy.body.orders.find((order: { id: string }) => order.id === readyId).delivery).toBeNull();
+  });
+
+  it("keeps older downloads accessible beyond recent orders, including timestamp ties and archived products", async () => {
+    await pool.query("UPDATE offers SET price_minor = 100 WHERE id = 'offer_research_pack'");
+    const ids: string[] = [];
+    for (let n = 0; n < 52; n++) {
+      const signedQuote = await service.createQuote(config.sandboxMerchantId, "offer_research_pack", 1);
+      const prepared = await service.preparePayment({ consumerId: config.sandboxConsumerId, agentClientId: "agent_reference", signedQuote, idempotencyKey: randomUUID() });
+      const authorized = await service.paymentStatus(prepared.paymentId, config.sandboxConsumerId);
+      const order = await service.commitOrder({ merchantId: config.sandboxMerchantId, signedQuote, mandate: PaymentMandateSchema.parse(authorized.mandate), idempotencyKey: randomUUID() });
+      ids.push(order.orderId);
+    }
+    // Distinct microseconds share the same JS millisecond. Pagination must preserve both groups.
+    await pool.query("UPDATE orders SET created_at = '2026-01-01T12:00:00.123456Z' WHERE id = ANY($1::text[])", [ids.slice(0, 27)]);
+    await pool.query("UPDATE orders SET created_at = '2026-01-01T12:00:00.123789Z' WHERE id = ANY($1::text[])", [ids.slice(27)]);
+    await pool.query("UPDATE offers SET active = false, archived_at = now() WHERE id = 'offer_research_pack'");
+    const received: string[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 3; page++) {
+      const response = await request(app).get(`/api/consumer/downloads${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`).set("authorization", `Bearer ${token}`).expect(200);
+      expect(response.body.downloads).toHaveLength(page < 2 ? 24 : 4);
+      received.push(...response.body.downloads.map((file: { orderId: string }) => file.orderId));
+      cursor = response.body.nextCursor as string | null;
+      if (page < 2) expect(cursor).toBeTruthy();
+    }
+    expect(cursor).toBeNull();
+    expect(new Set(received).size).toBe(52);
+    expect(received).toEqual([...ids.slice(27).sort().reverse(), ...ids.slice(0, 27).sort().reverse()]);
+    const dashboard = await request(app).get("/api/consumer/dashboard").set("authorization", `Bearer ${token}`).expect(200);
+    expect(dashboard.body.orders).toHaveLength(50);
+    const olderId = received.find((id) => !dashboard.body.orders.some((order: { id: string }) => order.id === id))!;
+    const file = await request(app).get(`/api/consumer/orders/${olderId}/download`).set("authorization", `Bearer ${token}`).expect(200);
+    expect(file.headers["content-disposition"]).toBe('attachment; filename="market-research-sample.txt"');
+    expect(file.body.toString()).toContain("Market research worksheet");
+    await balanced();
+  }, 90_000);
 
   it("cancels a pending service through chat and restores the captured amount", async () => {
     const bought = await buy("offer_brand_review", "Buy AI Brand Review under $150");

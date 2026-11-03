@@ -12,6 +12,11 @@ export type ConsumerOrder = {
   serviceIntakePrompt: string | null; serviceDetails: string | null;
 };
 
+export type ConsumerDownload = {
+  orderId: string; offerName: string; merchantName: string;
+  purchasedAt: string; fulfilledAt: string | null; fileName: string; sizeBytes: number;
+};
+
 const FILE_TYPES: Record<string, string> = {
   pdf: "application/pdf", txt: "text/plain", md: "text/markdown", csv: "text/csv",
   zip: "application/zip", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
@@ -97,6 +102,39 @@ export class DeliveryService {
       } : null,
       serviceIntakePrompt: o.service_intake_prompt, serviceDetails: o.service_details,
     }));
+  }
+
+  async downloads(consumerId: string, cursor?: unknown): Promise<{ downloads: ConsumerDownload[]; nextCursor: string | null }> {
+    if (cursor !== undefined && (typeof cursor !== "string" || cursor.length < 1 || cursor.length > 128)) {
+      throw new DomainError("INVALID_DOWNLOAD_CURSOR", "Use the next page link to load more downloads");
+    }
+    // Read the timestamp as text to preserve Postgres microseconds across page boundaries.
+    // A refunded cursor order remains a valid position, but never appears as a downloadable file.
+    const before = cursor === undefined ? null : requireValue((await this.pool.query<{ created_at: string }>(
+      `SELECT o.created_at::text FROM orders o JOIN payment_intents p ON p.id = o.payment_id
+       WHERE o.id = $1 AND p.consumer_id = $2`, [cursor, consumerId],
+    )).rows[0], "INVALID_DOWNLOAD_CURSOR", "This download page is no longer available. Refresh your library.");
+    const pageSize = 24;
+    const result = await this.pool.query<{
+      id: string; offer_name: string; merchant_name: string; created_at: Date; fulfilled_at: Date | null;
+      file_name: string; size_bytes: number;
+    }>(`SELECT o.id, f.name AS offer_name, m.name AS merchant_name, o.created_at, o.fulfilled_at,
+               a.file_name, octet_length(a.contents) AS size_bytes
+        FROM orders o JOIN payment_intents p ON p.id = o.payment_id
+        JOIN quotes q ON q.id = o.quote_id JOIN offers f ON f.id = q.offer_id
+        JOIN merchants m ON m.id = o.merchant_id JOIN delivery_assets a ON a.id = o.delivery_asset_id
+        WHERE p.consumer_id = $1 AND o.status = 'fulfilled'
+          AND ($2::timestamptz IS NULL OR (o.created_at, o.id) < ($2::timestamptz, $3::text))
+        ORDER BY o.created_at DESC, o.id DESC LIMIT $4`, [consumerId, before?.created_at ?? null, cursor ?? null, pageSize + 1]);
+    const page = result.rows.slice(0, pageSize);
+    return {
+      downloads: page.map((row) => ({
+        orderId: row.id, offerName: row.offer_name, merchantName: row.merchant_name,
+        purchasedAt: row.created_at.toISOString(), fulfilledAt: row.fulfilled_at?.toISOString() ?? null,
+        fileName: row.file_name, sizeBytes: row.size_bytes,
+      })),
+      nextCursor: result.rows.length > pageSize ? page.at(-1)!.id : null,
+    };
   }
 
   async submitDetails(consumerId: string, orderId: string, value: unknown) {
