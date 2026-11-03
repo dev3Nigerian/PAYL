@@ -6,6 +6,7 @@ previews:
 services:
   - type: web
     name: payl-api-dev3nigerian
+    branch: main
     runtime: docker
     plan: starter
     numInstances: 1
@@ -68,6 +69,7 @@ services:
 
   - type: web
     name: payl-consumer-dev3nigerian
+    branch: main
     domains:
       - antspace.online
     runtime: docker
@@ -92,6 +94,7 @@ services:
 
   - type: web
     name: payl-merchant-dev3nigerian
+    branch: main
     domains:
       - merchants.antspace.online
     runtime: docker

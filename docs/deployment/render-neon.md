@@ -9,7 +9,7 @@ This deployment is for product demonstrations with simulated funds. It is not ap
 - `payl-merchant-dev3nigerian`: merchant registration, catalog, orders, and settlement dashboard.
 - Neon: persistent PostgreSQL database using its pooled TLS connection.
 
-The three Render services use the repository's root `render.yaml`. Each service builds from its own Dockerfile but retains the monorepo root as the Docker context.
+The three Render services use the repository's root `render.yaml`, which explicitly sets `branch: main` and `autoDeployTrigger: checksPass` for each service. Each service builds from its own Dockerfile but retains the monorepo root as the Docker context. The Blueprint's linked branch must also be `main` so future configuration changes are synced from the submission branch.
 
 The Blueprint uses `antspace.online` and `merchants.antspace.online` for public navigation, approvals, and each frontend's `PAYL_PUBLIC_WEB_URL`. The [custom-domain guide](antspace-domain.md) documents DNS and certificate verification. Existing service names, API endpoints, secrets, and database remain compatible.
 
@@ -64,9 +64,9 @@ Do not copy `PAYL_SIGNING_MASTER_KEY` into the repository. Changing it later inv
 
 ## 4. Create the Render Blueprint
 
-1. Sign in to Render and connect the GitHub account that can read the private `dev3Nigerian/PAYL` repository.
+1. Sign in to Render and connect the GitHub account that manages `dev3Nigerian/PAYL`.
 2. Choose **New → Blueprint** and select the Antspace repository.
-3. Keep `render.yaml` as the Blueprint path.
+3. Select `main` as the linked branch and keep `render.yaml` as the Blueprint path.
 4. Enter the prompted `sync: false` values:
 
    - `DATABASE_URL`: Neon pooled TLS URL.
@@ -89,6 +89,20 @@ The API applies migrations and provisions the initial simulated wallet, merchant
 4. Confirm the compute plan on each service and run the health and sign-in checks below.
 
 Use the existing Blueprint so the upgrade applies to the existing services. This compute-only change needs no new environment variables, database migrations, or database reset. If the services were created individually and are not managed by a Blueprint, change each existing service's compute plan to Starter in Render, or follow Render's instructions for adding existing resources to a Blueprint.
+
+### Switch an existing Blueprint to main
+
+The previous hosted installation tracked `codex/hosted-sandbox-deployment`. Complete this cutover after the current release is merged into `main` and its CI checks pass:
+
+1. Open the existing PAYL/Antspace Blueprint in the [Render Dashboard](https://dashboard.render.com/), then open **Settings**.
+2. Change its linked **Branch** to `main`. Keep the repository `dev3Nigerian/PAYL` and Blueprint path `render.yaml`, then save the change.
+3. Keep **Auto Sync** enabled for future updates. Run **Manual Sync** if the branch change has not already started a sync.
+4. Review and apply the update to the existing `payl-api-dev3nigerian`, `payl-consumer-dev3nigerian`, and `payl-merchant-dev3nigerian` services. The manifest pins each service to `main` and preserves its name, Starter plan, domains, Dockerfile, and secret references.
+5. In each service's **Settings**, verify that the deployment branch is `main` and automatic deployments run after CI checks pass. The linked branch for the Blueprint and the deployment branch for each service are separate settings; both must point to `main`.
+6. Wait for all three deployments to become live and check that their deployed commit is the current `main` commit. If a sync finishes without deploying, use **Manual Deploy → Deploy latest commit** on each service after CI passes.
+7. Check [Antspace home](https://antspace.online/), [merchant sign-in](https://merchants.antspace.online/login), and [API health](https://payl-api-dev3nigerian.onrender.com/healthz). The API should report `status: ok` and `database: ready`.
+
+Use the existing Blueprint and services to retain the current URLs, domains, and stored environment values. This branch cutover requires no new environment variables or database changes. See Render's [Blueprint management](https://render.com/docs/infrastructure-as-code) and [branch field reference](https://render.com/docs/blueprint-spec#branch).
 
 ## 5. Verify the deployment
 

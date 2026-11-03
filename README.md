@@ -79,6 +79,8 @@ Antspace includes Docker images and a Render Blueprint for a three-service hoste
 
 Follow [the Render and Neon deployment runbook](docs/deployment/render-neon.md). The Blueprint uses one paid Starter instance for each of the three web services ($7 each, $21/month base compute), so idle traffic does not put the dashboards or API lifecycle processing to sleep. Render credits apply through workspace billing. The hosted profile remains simulated-funds-only and is not a live payment deployment.
 
+`render.yaml` pins all three services to `main` and waits for passing CI checks before automatic deployments. Existing installations must also switch their Blueprint's linked branch to `main`; follow [the branch cutover steps](docs/deployment/render-neon.md#switch-an-existing-blueprint-to-main) so future infrastructure updates come from the same branch.
+
 Sandbox dashboard accounts:
 
 | Workspace | Email | Password |
