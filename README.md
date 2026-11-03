@@ -1,8 +1,18 @@
 # Antspace — Buy digital products through conversation
 
-**Prepared:** 15 July 2026  
-**Project status:** Standalone sandbox MVP implemented  
+**Updated:** 3 November 2026 · **Status:** Hosted hackathon sandbox · **License:** [MIT](LICENSE)
+
 **Product direction:** Consumer AI to merchant AI commerce through MCP
+
+## Try the hackathon build
+
+- **Live app:** [antspace.online](https://antspace.online/) — choose **Shop with AI** or **Sell on Antspace**.
+- **Submission source:** the [`main` branch](https://github.com/dev3Nigerian/PAYL/tree/main) contains the current Antspace release.
+- **Shopper test:** register for $100 in virtual USD, ask "Find a portfolio template under $30", buy a product through chat, and open **My downloads** to retrieve it.
+- **Merchant test:** create a merchant account, publish a digital product with a delivery file, and inspect orders and settlement after a shopper buys it.
+- **PayPal demonstration:** wallet top-ups and merchant withdrawals use PayPal Sandbox. Individual AI purchases use Antspace's signed quotes, spending policy, mandates, and ledger.
+
+The local setup below runs the API, both dashboards, and the sample catalog. In-app AI chat additionally requires a server-side DeepSeek API key; PayPal funding and payouts require PayPal Sandbox credentials. See [the deployment and provider setup guide](docs/deployment/render-neon.md). The published development credentials below are for local testing; hosted users register their own accounts.
 
 Antspace is the customer-facing name of the PAYL project. The existing `@payl/*` packages, `PAYL_*` environment keys, session cookies, signing identities, and API/webhook addresses retain their names for compatibility. The rebrand requires no database reset or migration. Existing signed terms and purchased files retain their original content.
 
