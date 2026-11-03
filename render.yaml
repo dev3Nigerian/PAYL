@@ -1,0 +1,115 @@
+# Starter compute is $7/month per service ($21/month for these three instances).
+# Render also calls this tier 0.5c-512mb; the starter alias remains supported.
+previews:
+  generation: off
+
+services:
+  - type: web
+    name: payl-api-dev3nigerian
+    runtime: docker
+    plan: starter
+    numInstances: 1
+    region: frankfurt
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PAYL_DEPLOYMENT_PROFILE
+        value: hosted_sandbox
+      - key: PAYL_DEV_KEYS
+        value: "false"
+      - key: PAYL_SIGNING_MASTER_KEY
+        sync: false
+      - key: PAYL_SIGNING_KEY_ID
+        value: payl-hosted-sandbox-2026-01
+      - key: DATABASE_URL
+        sync: false
+      - key: PUBLIC_BASE_URL
+        value: https://payl-api-dev3nigerian.onrender.com
+      - key: PAYL_ISSUER
+        value: https://payl-api-dev3nigerian.onrender.com
+      - key: APPROVAL_WEB_URL
+        value: https://antspace.online
+      - key: MERCHANT_WEB_URL
+        value: https://merchants.antspace.online
+      - key: SANDBOX_BOOTSTRAP_ENABLED
+        value: "true"
+      - key: SANDBOX_CONSUMER_EMAIL
+        sync: false
+      - key: SANDBOX_CONSUMER_PASSWORD
+        sync: false
+      - key: SANDBOX_CONSUMER_TOTP_SECRET
+        sync: false
+      - key: SANDBOX_MERCHANT_EMAIL
+        sync: false
+      - key: SANDBOX_MERCHANT_PASSWORD
+        sync: false
+      - key: SANDBOX_QUOTE_TTL_MINUTES
+        value: "60"
+      - key: SANDBOX_APPROVAL_TTL_MINUTES
+        value: "45"
+      - key: SANDBOX_FULFILLMENT_TTL_MINUTES
+        value: "60"
+      - key: LIFECYCLE_WORKER_INTERVAL_MS
+        value: "2000"
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_MODEL
+        value: deepseek-flash
+      - key: PAYPAL_SANDBOX_CLIENT_ID
+        sync: false
+      - key: PAYPAL_SANDBOX_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_SANDBOX_MERCHANT_ID
+        sync: false
+      - key: PAYPAL_SANDBOX_WEBHOOK_ID
+        sync: false
+
+  - type: web
+    name: payl-consumer-dev3nigerian
+    domains:
+      - antspace.online
+    runtime: docker
+    plan: starter
+    numInstances: 1
+    region: frankfurt
+    dockerfilePath: ./apps/approval-web/Dockerfile
+    dockerContext: .
+    healthCheckPath: /login
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PAYL_API_URL
+        value: https://payl-api-dev3nigerian.onrender.com
+      - key: MERCHANT_WEB_URL
+        value: https://merchants.antspace.online
+      - key: PAYL_PUBLIC_WEB_URL
+        value: https://antspace.online
+      - key: PAYL_PREFILL_DEMO_CREDENTIALS
+        value: "false"
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+
+  - type: web
+    name: payl-merchant-dev3nigerian
+    domains:
+      - merchants.antspace.online
+    runtime: docker
+    plan: starter
+    numInstances: 1
+    region: frankfurt
+    dockerfilePath: ./apps/merchant-web/Dockerfile
+    dockerContext: .
+    healthCheckPath: /login
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PAYL_API_URL
+        value: https://payl-api-dev3nigerian.onrender.com
+      - key: APPROVAL_WEB_URL
+        value: https://antspace.online
+      - key: PAYL_PUBLIC_WEB_URL
+        value: https://merchants.antspace.online
+      - key: PAYL_PREFILL_DEMO_CREDENTIALS
+        value: "false"
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"

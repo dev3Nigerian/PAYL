@@ -2,8 +2,9 @@
 
 import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { AuthShell, Icon } from "@payl/ui";
 
-export default function LoginForm({ demoEmail, demoPassword }: { demoEmail: string; demoPassword: string }) {
+export default function LoginForm({ demoEmail, demoPassword, apiOrigin, prefilled, merchantLogin }: { demoEmail: string; demoPassword: string; apiOrigin: string; prefilled: boolean; merchantLogin: string }) {
   const search = useSearchParams();
   const [email, setEmail] = useState(demoEmail);
   const [password, setPassword] = useState(demoPassword);
@@ -15,38 +16,59 @@ export default function LoginForm({ demoEmail, demoPassword }: { demoEmail: stri
     setBusy(true);
     setError("");
     try {
+      const requested = search.get("returnTo");
+      const oauthHandoff = Boolean(requested && isOAuthReturnTo(requested, apiOrigin));
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, oauthHandoff }),
       });
-      const body = await response.json() as { error?: { message?: string } };
+      const body = await readJson(response) as { handoffUrl?: string; error?: { message?: string } };
       if (!response.ok) throw new Error(body.error?.message ?? "Sign-in failed");
-      const requested = search.get("returnTo");
-      const returnTo = requested && safeReturnTo(requested) ? requested : "/";
-      window.location.assign(returnTo);
+      if (requested && isOAuthReturnTo(requested, apiOrigin) && body.handoffUrl) {
+        const handoff = new URL(body.handoffUrl);
+        handoff.searchParams.set("returnTo", requested);
+        window.location.assign(handoff);
+      } else {
+        window.location.assign(requested && isLocalReturnTo(requested) ? requested : `/dashboard${window.location.hash}`);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Sign-in failed");
       setBusy(false);
     }
   }
 
-  return <main className="shell"><form className="card login-card" onSubmit={submit}>
-    <div className="brand">PAYL</div><p className="eyebrow">Consumer identity</p><h1>Sign in to your wallet</h1>
-    <p className="muted">Your dashboard, policies, approvals, and MCP grants are isolated to this account.</p>
-    <label className="login-field"><span>Email</span><input aria-label="Email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-    <label className="login-field"><span>Password</span><input aria-label="Password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-    {error && <p className="error">{error}</p>}
-    <button className="primary-button login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
-    <p className="fineprint">Sandbox credentials are prefilled. Payment approval separately requires your six-digit authenticator code.</p>
-  </form></main>;
+  return <AuthShell role="consumer" homeHref="/" switchHref={merchantLogin}><form className="card login-card" onSubmit={submit} aria-busy={busy}>
+    <p className="eyebrow">Your personal workspace</p><h1>Welcome back.</h1>
+    <p className="muted">A good find is waiting. Sign in to shop with AI and manage your Antspace wallet.</p>
+    <label className="login-field"><span>Email address</span><input required aria-label="Email" type="email" autoComplete="username" placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+    <label className="login-field"><span>Password</span><input required aria-label="Password" type="password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+    {error && <p className="error" role="alert">{error}</p>}
+    {busy && <p className="fineprint" role="status">Connecting to Antspace. If the sandbox was asleep, this may take up to a minute.</p>}
+    <button className="primary-button login-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in to Antspace"}<Icon name="arrow" size={16} /></button>
+    <a className="auth-link" href="/register">New to Antspace? Sign up with $100 sandbox credit</a>
+    <p className="fineprint">{prefilled ? "Local sandbox credentials are prefilled." : "Sign in with the email and password you registered."} Set up your payment authenticator in Security for purchases that require approval.</p>
+  </form></AuthShell>;
 }
 
-function safeReturnTo(value: string): boolean {
-  if (value.startsWith("/") && !value.startsWith("//")) return true;
+async function readJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) return { error: { message: `Antspace did not return a response (${response.status})` } };
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { error: { message: "Antspace returned an invalid response. Please try again shortly." } };
+  }
+}
+
+function isLocalReturnTo(value: string): boolean {
+  return value.startsWith("/") && !value.startsWith("//") && !value.includes("\\");
+}
+
+function isOAuthReturnTo(value: string, apiOrigin: string): boolean {
   try {
     const url = new URL(value);
-    return url.hostname === "localhost" && ["3000", "4100"].includes(url.port);
+    return url.origin === new URL(apiOrigin).origin && url.pathname === "/authorize";
   } catch {
     return false;
   }

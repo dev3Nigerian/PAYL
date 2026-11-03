@@ -15,9 +15,12 @@ const pool = createPool(config);
 
 await migrate(pool);
 const service = new PaylService(pool, config);
-await service.seedSandbox();
 const identity = new IdentityService(pool, config);
-await identity.seedSandboxUsers();
+if (config.sandboxBootstrapEnabled) {
+  await service.seedSandbox();
+  logger.info(await service.seedSampleCatalog(), "Sandbox sample catalog checked");
+  await identity.seedSandboxUsers();
+}
 const oauth = new PaylOAuthProvider(pool, config);
 const workers = new LifecycleWorkers(service, config.lifecycleWorkerIntervalMs, logger);
 workers.start();
@@ -27,11 +30,13 @@ server.listen(config.port, () => {
   logger.info(
     {
       port: config.port,
-      walletMcp: `http://localhost:${config.port}/mcp/wallet`,
-      commerceMcp: `http://localhost:${config.port}/mcp/commerce`,
-      merchantMcp: `http://localhost:${config.port}/mcp/merchants/${config.sandboxMerchantId}`,
+      deploymentProfile: config.deploymentProfile,
+      consumerMcp: new URL("/mcp", config.publicBaseUrl).href,
+      walletMcp: new URL("/mcp/wallet", config.publicBaseUrl).href,
+      commerceMcp: new URL("/mcp/commerce", config.publicBaseUrl).href,
+      merchantMcp: new URL(`/mcp/merchants/${config.sandboxMerchantId}`, config.publicBaseUrl).href,
     },
-    "PAYL sandbox is ready",
+    "Antspace sandbox is ready",
   );
 });
 

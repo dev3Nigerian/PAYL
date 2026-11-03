@@ -14,7 +14,7 @@ type Approval = {
 };
 
 function money(amountMinor: string, currency: string): string {
-  return new Intl.NumberFormat("en-NG", { style: "currency", currency }).format(Number(amountMinor) / 100);
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(amountMinor) / 100);
 }
 
 export default function ApprovalClient({ approvalId }: { approvalId: string }) {
@@ -56,16 +56,16 @@ export default function ApprovalClient({ approvalId }: { approvalId: string }) {
     }
   }
 
-  if (error && !approval) return <main className="shell"><section className="card"><div className="brand">PAYL</div><h1>Approval unavailable</h1><p className="error">{error}</p></section></main>;
-  if (!approval) return <main className="shell"><section className="card"><div className="brand">PAYL</div><p>Loading the signed quote…</p></section></main>;
+  if (error && !approval) return <main className="shell"><section className="card"><div className="brand">Antspace</div><h1>Approval unavailable</h1><p className="error">{error}</p></section></main>;
+  if (!approval) return <main className="shell"><section className="card"><div className="brand">Antspace</div><p>Loading the signed quote…</p></section></main>;
   const final = approval.status !== "pending";
 
   return <main className="shell"><section className="card">
-    <header className="topline"><div className="brand">PAYL</div><span className="pill">Authenticated sandbox</span></header>
+    <header className="topline"><div className="brand">Antspace</div><span className="pill">Authenticated sandbox</span></header>
     <p className="eyebrow">Agent-initiated payment</p><h1>{final ? `Payment ${approval.status}` : "Review this payment"}</h1>
     <div className="amount">{money(approval.amountMinor, approval.currency)}</div><p className="merchant">to {approval.merchantName}</p>
     <div className="details">{approval.items.map((item) => <div className="line" key={item.description}><span>{item.quantity} × {item.description}</span><strong>{money(item.lineTotalMinor, approval.currency)}</strong></div>)}<div className="line"><span>Authorization</span><strong>Single-use mandate</strong></div><div className="line"><span>Expires</span><strong>{new Date(approval.expiresAt).toLocaleTimeString()}</strong></div></div>
-    {!final && <><label className="mfa-field"><span>Authenticator code</span><input aria-label="Authenticator code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /><small>Required only when approving payment.</small></label><div className="actions"><button className="secondary" disabled={busy} onClick={() => void decide("decline")}>Decline</button><button className="primary" disabled={busy || mfaCode.length !== 6} onClick={() => void decide("approve")}>{busy ? "Authorizing…" : "Approve with MFA"}</button></div></>}
-    {error && <p className="error">{error}</p>}<p className="fineprint">The merchant cannot change the amount after approval. PAYL binds authorization to the signed quote and merchant.</p>
+    {!final && <><label className="mfa-field"><span>Authenticator code</span><input aria-label="Authenticator code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, "").slice(0, 6))} /><small>Required only when approving payment. <a href="/dashboard#security" target="_blank" rel="noreferrer">Set up your authenticator</a> in Security, then return here.</small></label><div className="actions"><button className="secondary" disabled={busy} onClick={() => void decide("decline")}>Decline</button><button className="primary" disabled={busy || mfaCode.length !== 6} onClick={() => void decide("approve")}>{busy ? "Authorizing…" : "Approve with MFA"}</button></div></>}
+    {error && <p className="error">{error}</p>}<p className="fineprint">The merchant cannot change the amount after approval. Antspace binds authorization to the signed quote and merchant.</p>
   </section></main>;
 }

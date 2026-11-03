@@ -65,14 +65,17 @@ async function main() {
   try {
     const merchants = valueFrom(await commerce.callTool({ name: "commerce.list_merchants", arguments: {} }));
     console.log("1. Registered merchants discovered through one MCP connection", merchants.merchants);
-    const offers = valueFrom(await commerce.callTool({ name: "commerce.search_offers", arguments: { query: "research" } }));
+    const offers = valueFrom(await commerce.callTool({ name: "commerce.search_offers", arguments: { query: "launch" } }));
     console.log("2. Multi-merchant offers discovered", offers.offers);
+    const selected = (Array.isArray(offers.offers) ? offers.offers as Array<Record<string, unknown>> : [])
+      .find((offer) => offer.merchantId === merchantId);
+    if (typeof selected?.offerId !== "string") throw new Error("No launch product found for the configured sandbox merchant");
 
     const signedQuote = SignedQuoteSchema.parse(
       valueFrom(
         await commerce.callTool({
           name: "commerce.create_quote",
-          arguments: { merchantId, offerId: "offer_research_pack", quantity: 1 },
+          arguments: { merchantId, offerId: selected.offerId, quantity: 1 },
         }),
       ),
     );

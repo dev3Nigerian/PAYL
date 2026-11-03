@@ -6,7 +6,7 @@ const apiUrl = process.env.PAYL_API_URL ?? "http://localhost:4100";
 export async function POST() {
   const token = (await cookies()).get("payl_consumer_session")?.value;
   if (token) await fetch(`${apiUrl}/api/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${token}` } });
-  const response = new NextResponse(null, { status: 204 });
+  const response = NextResponse.json({ browserLogoutUrl: `${apiUrl}/api/auth/browser-logout` });
   response.cookies.set("payl_consumer_session", "", { httpOnly: true, sameSite: "lax", path: "/", maxAge: 0 });
   return response;
 }

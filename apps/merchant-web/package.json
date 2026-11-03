@@ -6,9 +6,11 @@
     "dev": "next dev --port 3001",
     "build": "next build",
     "start": "next start --port 3001",
+    "start:hosted": "next start --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@payl/ui": "workspace:*",
     "next": "16.2.10",
     "react": "19.2.7",
     "react-dom": "19.2.7"

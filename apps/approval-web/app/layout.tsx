@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "@payl/ui/styles.css";
+import "./workspace.css";
+import "./chat.css";
 
 export const metadata: Metadata = {
-  title: "PAYL Consumer Wallet",
-  description: "Consumer wallet, policy, and human authorization for PAYL sandbox payments",
+  applicationName: "Antspace",
+  title: "Antspace — Your personal workspace",
+  description: "Shop with AI, manage your Antspace wallet, and keep control of your purchases.",
 };
 
 export default function Layout({ children }: Readonly<{ children: React.ReactNode }>) {

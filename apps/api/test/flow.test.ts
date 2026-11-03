@@ -5,20 +5,28 @@ import { loadConfig } from "../src/config.js";
 import { createPool } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { PaylService } from "../src/service.js";
+import { seedLegacyCatalogFixture } from "./legacy-catalog-fixture.js";
 import { IdentityService } from "../src/identity.js";
+import { FakePayPalGateway } from "./fake-paypal.js";
 
 const config = loadConfig({
   ...process.env,
   NODE_ENV: "test",
+  PAYL_DEPLOYMENT_PROFILE: "local_sandbox",
   DATABASE_URL: process.env.PAYL_TEST_DATABASE_URL ?? "postgresql://payl:payl_test_only@localhost:54330/payl_test",
   APPROVAL_WEB_URL: "http://localhost:3000",
   PAYL_ISSUER: "https://sandbox.payl.local",
   PAYL_DEV_KEYS: "true",
   SANDBOX_CONSUMER_ID: "consumer_demo",
   SANDBOX_MERCHANT_ID: "merchant_demo",
+  PAYPAL_SANDBOX_CLIENT_ID: "sandbox-client-id",
+  PAYPAL_SANDBOX_CLIENT_SECRET: "sandbox-client-secret",
+  PAYPAL_SANDBOX_MERCHANT_ID: "sandbox-business-id",
+  PAYPAL_SANDBOX_WEBHOOK_ID: "sandbox-webhook-id",
 });
 const pool = createPool(config);
-const service = new PaylService(pool, config);
+const paypal = new FakePayPalGateway();
+const service = new PaylService(pool, config, paypal);
 const identity = new IdentityService(pool, config);
 
 beforeAll(async () => {
@@ -30,13 +38,16 @@ beforeEach(async () => {
     `TRUNCATE TABLE
        oauth_revoked_access_tokens, oauth_refresh_tokens, oauth_grants, oauth_authorization_codes,
        oauth_consent_requests, oauth_clients, auth_sessions, auth_users,
+       auth_browser_handoffs, consumer_chat_messages, consumer_chat_conversations,
        reconciliation_reports, outbox_events, merchant_webhook_endpoints, payout_batches,
+       paypal_webhook_events, wallet_topups,
        merchant_settlement_configs, order_cancellations, payment_cancellations,
        audit_events, refunds, orders, payment_mandates, approval_challenges, payment_intents, quotes,
        journal_lines, journal_entries, ledger_accounts, spending_policies, offers, consumers, merchants
      RESTART IDENTITY CASCADE`,
   );
   await service.seedSandbox();
+  await seedLegacyCatalogFixture(pool, config.sandboxMerchantId);
   await identity.seedSandboxUsers();
 });
 
@@ -58,7 +69,7 @@ describe("PAYL signed quote to receipt flow", () => {
     if (prepared.status !== "pending_approval") throw new Error("Expected approval challenge");
 
     const beforeApproval = await service.walletSummary("consumer_demo");
-    expect(beforeApproval.balances).toEqual({ available: "10000000", reserved: "0" });
+    expect(beforeApproval.balances).toEqual({ available: "100000", reserved: "0" });
 
     await service.decideApproval(prepared.approvalId, "consumer_demo", "approve");
     const authorized = await service.paymentStatus(prepared.paymentId, "consumer_demo");
@@ -71,7 +82,7 @@ describe("PAYL signed quote to receipt flow", () => {
       mandate: authorized.mandate as never,
       idempotencyKey: "commit-human-001",
     });
-    expect(receipt.receipt?.payload.capturedAmountMinor).toBe("750000");
+    expect(receipt.receipt?.payload.capturedAmountMinor).toBe("7500");
     expect(receipt.receipt?.payload.fulfillmentStatus).toBe("fulfilled");
 
     const duplicate = await service.commitOrder({
@@ -84,17 +95,17 @@ describe("PAYL signed quote to receipt flow", () => {
 
     const state = await service.demoState();
     expect(state.ledger).toEqual({ entries: "4", unbalanced_entries: "0" });
-    expect((state.wallet as { balances: unknown }).balances).toEqual({ available: "9250000", reserved: "0" });
+    expect((state.wallet as { balances: unknown }).balances).toEqual({ available: "92500", reserved: "0" });
 
     const merchant = await pool.query<{ balance: string }>(
       `SELECT COALESCE(sum(l.amount_minor), 0)::text AS balance
        FROM journal_lines l WHERE l.account_id = 'acct_merchant_payable'`,
     );
-    expect(merchant.rows[0]?.balance).toBe("735000");
+    expect(merchant.rows[0]?.balance).toBe("7350");
   });
 
   it("auto-authorizes only within the configured policy", async () => {
-    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = 'consumer_demo'");
     const quote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
     const prepared = await service.preparePayment({
       consumerId: "consumer_demo",
@@ -126,22 +137,22 @@ describe("PAYL signed quote to receipt flow", () => {
     const updated = await service.updateWalletPolicy({
       consumerId: "consumer_demo",
       expectedVersion: 1,
-      autoApproveLimitMinor: "250000",
-      perTransactionLimitMinor: "3000000",
-      dailyLimitMinor: "8000000",
+      autoApproveLimitMinor: "2500",
+      perTransactionLimitMinor: "30000",
+      dailyLimitMinor: "80000",
     });
     expect(updated).toMatchObject({
       version: 2,
-      autoApproveLimitMinor: "250000",
-      perTransactionLimitMinor: "3000000",
-      dailyLimitMinor: "8000000",
+      autoApproveLimitMinor: "2500",
+      perTransactionLimitMinor: "30000",
+      dailyLimitMinor: "80000",
     });
     await expect(service.updateWalletPolicy({
       consumerId: "consumer_demo",
       expectedVersion: 1,
-      autoApproveLimitMinor: "250000",
-      perTransactionLimitMinor: "3000000",
-      dailyLimitMinor: "8000000",
+      autoApproveLimitMinor: "2500",
+      perTransactionLimitMinor: "30000",
+      dailyLimitMinor: "80000",
     })).rejects.toThrow("Policy changed in another session");
   });
 
@@ -150,10 +161,10 @@ describe("PAYL signed quote to receipt flow", () => {
       merchantId: "merchant_demo",
       name: "Campaign Audit",
       description: "A structured audit of one digital campaign.",
-      priceMinor: "2200000",
+      priceMinor: "22000",
       fulfillmentMethod: "digital_service",
     });
-    expect(product).toMatchObject({ name: "Campaign Audit", active: true, priceMinor: "2200000" });
+    expect(product).toMatchObject({ name: "Campaign Audit", active: true, priceMinor: "22000" });
     const offerId = product.offerId as string;
     expect(await service.searchOffers("merchant_demo", "Campaign")).toHaveLength(1);
     await service.setMerchantOfferActive("merchant_demo", offerId, false);
@@ -165,7 +176,7 @@ describe("PAYL signed quote to receipt flow", () => {
       merchantId: "merchant_demo",
       name: "Refundable Campaign Audit",
       description: "A campaign audit with a merchant-defined refund period.",
-      priceMinor: "150000",
+      priceMinor: "15000",
       fulfillmentMethod: "digital_service",
       refundable: true,
       refundWindowMinutes: 24 * 60,
@@ -192,7 +203,7 @@ describe("PAYL signed quote to receipt flow", () => {
       merchantId: "merchant_demo",
       name: "Invalid Refund Window",
       description: "A product whose refund window is not a whole hour.",
-      priceMinor: "100000",
+      priceMinor: "1000",
       fulfillmentMethod: "digital_service",
       refundable: true,
       refundWindowMinutes: 90,
@@ -200,7 +211,7 @@ describe("PAYL signed quote to receipt flow", () => {
   });
 
   it("refunds the consumer in full while retaining PAYL's fee from the merchant", async () => {
-    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = 'consumer_demo'");
     const quote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
     const prepared = await service.preparePayment({
       consumerId: "consumer_demo",
@@ -222,8 +233,8 @@ describe("PAYL signed quote to receipt flow", () => {
     ]);
     expect(refund.payload).toMatchObject({
       orderId: order.orderId,
-      refundedAmountMinor: "750000",
-      retainedFeeMinor: "15000",
+      refundedAmountMinor: "7500",
+      retainedFeeMinor: "150",
       status: "refunded",
     });
     expect(retry.payload.refundId).toBe(refund.payload.refundId);
@@ -234,7 +245,7 @@ describe("PAYL signed quote to receipt flow", () => {
     });
     expect(secondRetry.payload.refundId).toBe(refund.payload.refundId);
 
-    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "10000000", reserved: "0" });
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "100000", reserved: "0" });
     const balances = await pool.query<{ account_type: string; balance: string }>(
       `SELECT a.account_type, COALESCE(sum(l.amount_minor), 0)::text AS balance
        FROM ledger_accounts a LEFT JOIN journal_lines l ON l.account_id = a.id
@@ -242,8 +253,8 @@ describe("PAYL signed quote to receipt flow", () => {
        GROUP BY a.id, a.account_type ORDER BY a.account_type`,
     );
     expect(Object.fromEntries(balances.rows.map((row) => [row.account_type, row.balance]))).toEqual({
-      fee_revenue: "15000",
-      payable: "-15000",
+      fee_revenue: "150",
+      payable: "-150",
     });
     const lifecycle = await pool.query<{ order_status: string; payment_status: string }>(
       `SELECT o.status AS order_status, p.status AS payment_status
@@ -256,7 +267,7 @@ describe("PAYL signed quote to receipt flow", () => {
       merchant: { totals: { netSalesMinor: string; retainedRefundFeesMinor: string; refundedOrders: string } };
     };
     expect(state.ledger).toEqual({ entries: "5", unbalanced_entries: "0" });
-    expect(state.merchant.totals).toMatchObject({ netSalesMinor: "-15000", retainedRefundFeesMinor: "15000", refundedOrders: "1" });
+    expect(state.merchant.totals).toMatchObject({ netSalesMinor: "-150", retainedRefundFeesMinor: "150", refundedOrders: "1" });
 
     const otherQuote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
     const otherPayment = await service.preparePayment({
@@ -284,9 +295,10 @@ describe("PAYL signed quote to receipt flow", () => {
       merchantId: "merchant_demo",
       name: "Final Sale Report",
       description: "A final-sale report that cannot be refunded.",
-      priceMinor: "100000",
+      priceMinor: "1000",
       fulfillmentMethod: "digital_download",
     });
+    await service.delivery.upload("merchant_demo", { offerId: nonRefundable.offerId as string }, "final-report.txt", Buffer.from("The purchased final sale report"));
     const finalQuote = await service.createQuote("merchant_demo", nonRefundable.offerId as string, 1);
     const finalPayment = await service.preparePayment({
       consumerId: "consumer_demo",
@@ -307,7 +319,7 @@ describe("PAYL signed quote to receipt flow", () => {
       idempotencyKey: "refund-final-sale-001",
     })).rejects.toThrow("non-refundable");
 
-    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = 'consumer_demo'");
     const refundableQuote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
     const refundablePayment = await service.preparePayment({
       consumerId: "consumer_demo",
@@ -348,7 +360,7 @@ describe("PAYL signed quote to receipt flow", () => {
       merchantId: "merchant_demo",
       name: "Atlas Comparison Quote",
       description: "A low-value quote used for multi-merchant payment testing.",
-      priceMinor: "100000",
+      priceMinor: "1000",
       fulfillmentMethod: "digital_service",
       refundable: true,
       refundWindowMinutes: 1440,
@@ -357,7 +369,7 @@ describe("PAYL signed quote to receipt flow", () => {
       merchantId: secondMerchantId,
       name: "Second Signal Comparison Quote",
       description: "A second independent quote used for comparison testing.",
-      priceMinor: "200000",
+      priceMinor: "2000",
       fulfillmentMethod: "digital_service",
       refundable: true,
       refundWindowMinutes: 1440,
@@ -395,6 +407,8 @@ describe("PAYL signed quote to receipt flow", () => {
       mandate: secondPayment.mandate,
       idempotencyKey: "commit-second-multi-001",
     });
+    await service.delivery.upload("merchant_demo", { orderId: atlasOrder.orderId }, "result.txt", Buffer.from("Atlas service result"));
+    await service.delivery.upload(secondMerchantId, { orderId: secondReceipt.orderId }, "result.txt", Buffer.from("Second merchant result"));
     await service.fulfillOrder({
       merchantId: "merchant_demo",
       orderId: atlasOrder.orderId,
@@ -410,11 +424,11 @@ describe("PAYL signed quote to receipt flow", () => {
 
     const atlas = await service.merchantDashboard("merchant_demo") as { merchant: { balances: { payable: string }; totals: { completedOrders: string } } };
     const second = await service.merchantDashboard(secondMerchantId) as { merchant: { balances: { payable: string }; totals: { completedOrders: string } } };
-    expect(atlas.merchant.balances.payable).toBe("98000");
-    expect(second.merchant.balances.payable).toBe("196000");
+    expect(atlas.merchant.balances.payable).toBe("980");
+    expect(second.merchant.balances.payable).toBe("1960");
     expect(atlas.merchant.totals.completedOrders).toBe("1");
     expect(second.merchant.totals.completedOrders).toBe("1");
-    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "9700000", reserved: "0" });
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "97000", reserved: "0" });
 
     await service.refundOrder({
       consumerId: "consumer_demo",
@@ -423,13 +437,13 @@ describe("PAYL signed quote to receipt flow", () => {
     });
     const atlasAfterRefund = await service.merchantDashboard("merchant_demo") as { merchant: { balances: { payable: string } } };
     const secondAfterRefund = await service.merchantDashboard(secondMerchantId) as { merchant: { balances: { payable: string } } };
-    expect(atlasAfterRefund.merchant.balances.payable).toBe("98000");
-    expect(secondAfterRefund.merchant.balances.payable).toBe("-4000");
-    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "9900000", reserved: "0" });
+    expect(atlasAfterRefund.merchant.balances.payable).toBe("980");
+    expect(secondAfterRefund.merchant.balances.payable).toBe("-40");
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "99000", reserved: "0" });
   });
 
   it("cancels unused payment authority and releases reserved funds exactly once", async () => {
-    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = 'consumer_demo'");
     const quote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
     const prepared = await service.preparePayment({
       consumerId: "consumer_demo",
@@ -438,7 +452,7 @@ describe("PAYL signed quote to receipt flow", () => {
       idempotencyKey: "prepare-cancel-payment-001",
     });
     if (prepared.status !== "reserved") throw new Error("Expected reserved payment");
-    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "9250000", reserved: "750000" });
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "92500", reserved: "7500" });
 
     const first = await service.cancelPayment({
       consumerId: "consumer_demo",
@@ -451,9 +465,9 @@ describe("PAYL signed quote to receipt flow", () => {
       paymentId: prepared.paymentId,
       idempotencyKey: "cancel-payment-001",
     });
-    expect(first).toMatchObject({ status: "cancelled", releasedAmountMinor: "750000" });
-    expect(retry).toMatchObject({ status: "cancelled", releasedAmountMinor: "750000" });
-    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "10000000", reserved: "0" });
+    expect(first).toMatchObject({ status: "cancelled", releasedAmountMinor: "7500" });
+    expect(retry).toMatchObject({ status: "cancelled", releasedAmountMinor: "7500" });
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "100000", reserved: "0" });
   });
 
   it("keeps service revenue pending until fulfillment and fully reverses pre-fulfillment cancellation", async () => {
@@ -461,7 +475,7 @@ describe("PAYL signed quote to receipt flow", () => {
       merchantId: "merchant_demo",
       name: "Async Service",
       description: "A service requiring an explicit merchant fulfillment callback.",
-      priceMinor: "200000",
+      priceMinor: "2000",
       fulfillmentMethod: "digital_service",
       refundable: true,
       refundWindowMinutes: 1440,
@@ -483,7 +497,7 @@ describe("PAYL signed quote to receipt flow", () => {
     expect(order.status).toBe("confirmed");
     expect(order.receipt).toBeNull();
     const before = await service.merchantDashboard("merchant_demo") as { merchant: { balances: { pendingFulfillment: string; payable: string } } };
-    expect(before.merchant.balances).toMatchObject({ pendingFulfillment: "196000", payable: "0" });
+    expect(before.merchant.balances).toMatchObject({ pendingFulfillment: "1960", payable: "0" });
 
     const cancelled = await service.cancelOrder({
       consumerId: "consumer_demo",
@@ -492,7 +506,7 @@ describe("PAYL signed quote to receipt flow", () => {
       reason: "Merchant has not started work",
     });
     expect(cancelled.status).toBe("cancelled");
-    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "10000000", reserved: "0" });
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "100000", reserved: "0" });
     const after = await service.merchantDashboard("merchant_demo") as { merchant: { balances: { pendingFulfillment: string; payable: string } } };
     expect(after.merchant.balances).toMatchObject({ pendingFulfillment: "0", payable: "0" });
     const fee = await pool.query<{ balance: string }>(
@@ -502,7 +516,7 @@ describe("PAYL signed quote to receipt flow", () => {
   });
 
   it("expires reservations and timed-out fulfillment through the lifecycle worker", async () => {
-    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = 'consumer_demo'");
     const expiringQuote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
     const expiringPayment = await service.preparePayment({
       consumerId: "consumer_demo",
@@ -519,7 +533,7 @@ describe("PAYL signed quote to receipt flow", () => {
       merchantId: "merchant_demo",
       name: "Timeout Service",
       description: "A service used to verify fulfillment timeout compensation.",
-      priceMinor: "100000",
+      priceMinor: "1000",
       fulfillmentMethod: "digital_service",
     });
     const quote = await service.createQuote("merchant_demo", serviceProduct.offerId as string, 1);
@@ -535,20 +549,24 @@ describe("PAYL signed quote to receipt flow", () => {
     const secondRun = await service.processExpirations();
     expect(secondRun.ordersCancelled).toBe(1);
     expect((await service.getOrder("merchant_demo", order.orderId)).status).toBe("cancelled");
-    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "10000000", reserved: "0" });
+    expect((await service.walletSummary("consumer_demo")).balances).toEqual({ available: "100000", reserved: "0" });
   });
 
   it("creates reserve-backed payouts, reconciles the ledger, and surfaces pilot operations", async () => {
-    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+    await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = 'consumer_demo'");
     const quote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
     const prepared = await service.preparePayment({ consumerId: "consumer_demo", agentClientId: "agent_payout_test", signedQuote: quote, idempotencyKey: "prepare-payout-001" });
     if (prepared.status !== "reserved") throw new Error("Expected reserved payment");
     const order = await service.commitOrder({ merchantId: "merchant_demo", signedQuote: quote, mandate: prepared.mandate, idempotencyKey: "commit-payout-001" });
 
+    await service.setPayoutEmail("merchant_demo", "merchant-paypal@example.com");
+    paypal.payoutStatus = "PENDING";
     const payout = await service.createPayout({ merchantId: "merchant_demo", idempotencyKey: "payout-batch-001" });
-    expect(payout).toMatchObject({ sourcePayableMinor: "735000", reserveHeldMinor: "73500", paidAmountMinor: "661500", status: "paid" });
+    expect(payout).toMatchObject({ sourcePayableMinor: "7350", reserveHeldMinor: "735", paidAmountMinor: "6615", status: "pending" });
     const payoutRetry = await service.createPayout({ merchantId: "merchant_demo", idempotencyKey: "payout-batch-001" });
     expect(payoutRetry.payoutId).toBe(payout.payoutId);
+    paypal.payoutStatus = "SUCCESS";
+    expect(await service.payoutStatus("merchant_demo", payout.payoutId as string)).toMatchObject({ status: "paid" });
     expect(await service.reconciliationReport("merchant_demo")).toMatchObject({ differenceMinor: "0", reconciled: true });
 
     await service.refundOrder({ consumerId: "consumer_demo", orderId: order.orderId, idempotencyKey: "refund-after-payout-001" });
@@ -556,7 +574,7 @@ describe("PAYL signed quote to receipt flow", () => {
       merchant: { balances: { payable: string; reserve: string } };
       metrics: { funnel: { orders: string; refundedOrders: string }; operations: { payouts: string } };
     };
-    expect(dashboard.merchant.balances).toMatchObject({ payable: "-676500", reserve: "0" });
+    expect(dashboard.merchant.balances).toMatchObject({ payable: "-6765", reserve: "0" });
     expect(dashboard.metrics.funnel).toMatchObject({ orders: "1", refundedOrders: "1" });
     expect(dashboard.metrics.operations.payouts).toBe("1");
     expect(await service.reconciliationReport("merchant_demo", true)).toMatchObject({ differenceMinor: "0", reconciled: true });
@@ -584,7 +602,7 @@ describe("PAYL signed quote to receipt flow", () => {
       if (!address || typeof address === "string") throw new Error("Webhook test server did not bind a TCP port");
       const configured = await service.configureMerchantWebhook({ merchantId: "merchant_demo", url: `http://127.0.0.1:${address.port}/payl` });
       const quote = await service.createQuote("merchant_demo", "offer_research_pack", 1);
-      await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 1000000 WHERE consumer_id = 'consumer_demo'");
+      await pool.query("UPDATE spending_policies SET auto_approve_limit_minor = 10000 WHERE consumer_id = 'consumer_demo'");
       const prepared = await service.preparePayment({ consumerId: "consumer_demo", agentClientId: "agent_webhook_test", signedQuote: quote, idempotencyKey: "prepare-webhook-001" });
       if (prepared.status !== "reserved") throw new Error("Expected reserved payment");
       await service.commitOrder({ merchantId: "merchant_demo", signedQuote: quote, mandate: prepared.mandate, idempotencyKey: "commit-webhook-001" });

@@ -2,7 +2,8 @@
   "name": "payl",
   "version": "0.1.0",
   "private": true,
-  "description": "PAYL direct consumer-to-merchant AI commerce sandbox over MCP",
+  "license": "MIT",
+  "description": "Antspace AI shopping and merchant commerce sandbox over MCP",
   "packageManager": "pnpm@11.9.0",
   "engines": {
     "node": ">=24 <25"
@@ -16,8 +17,9 @@
     "db:migrate": "pnpm --filter @payl/api db:migrate",
     "demo": "pnpm --filter @payl/reference-agent demo",
     "auth:code": "pnpm --filter @payl/api auth:code",
+    "deploy:secrets": "node scripts/generate-hosted-secrets.mjs",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm db:test:up && pnpm --filter @payl/api test",
+    "test": "pnpm db:test:up && pnpm --filter @payl/api test && pnpm --filter @payl/approval-web test",
     "build": "pnpm -r build"
   },
   "devDependencies": {
