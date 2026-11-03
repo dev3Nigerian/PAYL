@@ -1,6 +1,6 @@
 # Antspace — Buy digital products through conversation
 
-**Updated:** 3 November 2026 · **Status:** Hosted hackathon sandbox · **License:** [MIT](LICENSE)
+**Updated:** 3 November 2026 · **Status:** Hosted hackathon sandbox · **License:** [AGPL-3.0-only](LICENSE)
 
 **Product direction:** Consumer AI to merchant AI commerce through MCP
 
@@ -305,3 +305,11 @@ The first sandbox should contain:
 - Merchant-acquisition owner and pilot budget.
 
 Nigeria remains a provisional regulatory research case until explicitly confirmed.
+
+## License
+
+Copyright (c) 2026 Antspace contributors.
+
+Antspace's original source code is licensed under the [GNU Affero General Public License, version 3 only](LICENSE) (`AGPL-3.0-only`). Commercial use is permitted. Modified versions offered to users over a network must prominently offer those users the corresponding source under the license's terms.
+
+Earlier MIT releases retain their original permissions. Third-party dependencies and separately licensed content retain their own terms. See [licensing scope, source availability, and release history](docs/licensing.md).

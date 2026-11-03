@@ -2,7 +2,7 @@
   "name": "payl",
   "version": "0.1.0",
   "private": true,
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "description": "Antspace AI shopping and merchant commerce sandbox over MCP",
   "packageManager": "pnpm@11.9.0",
   "engines": {
