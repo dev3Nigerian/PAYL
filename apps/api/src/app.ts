@@ -12,12 +12,14 @@ import { handleCommerceMcp, handleConsumerMcp, handleMerchantMcp, handleWalletMc
 import { MCP_SCOPES, type PaylOAuthProvider, requireToolScope, toolScopeForRequest } from "./oauth.js";
 import { DIGITAL_GOODS_TERMS_V1, type PaylService } from "./service.js";
 import { PaymentMandateSchema, SignedQuoteSchema, type SignedQuote } from "@payl/contracts";
+import type { BackroomService } from "./backroom.js";
 
 export function createApp(
   service: PaylService,
   identity: IdentityService,
   oauth: PaylOAuthProvider,
   config: Config,
+  backroom?: BackroomService,
 ): Express {
   const app = express();
   const mcpResource = new URL("/mcp", config.publicBaseUrl);
@@ -162,6 +164,34 @@ export function createApp(
   });
 
   const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: "draft-8", legacyHeaders: false });
+  const ownerLoginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: "draft-8", legacyHeaders: false });
+  app.use("/api/backroom", (_request, response, next) => {
+    response.set({ "cache-control": "private, no-store", "x-robots-tag": "noindex, nofollow" });
+    if (!config.backroom || !backroom) return next(new DomainError("BACKROOM_NOT_CONFIGURED", "Owner access has not been configured", 503));
+    next();
+  });
+  app.post("/api/backroom/login", ownerLoginLimiter, async (request, response, next) => {
+    try {
+      const result = await identity.login(request.body?.email, request.body?.password, "platform_admin", request.body?.mfaCode);
+      response.json({ ...result.session, sessionToken: result.token });
+    } catch (error) { next(error); }
+  });
+  app.use("/api/backroom", async (request, _response, next) => {
+    try { await requireWebSession(request, identity, "platform_admin"); next(); }
+    catch (error) { next(error); }
+  });
+  app.get("/api/backroom/overview", async (request, response, next) => {
+    try { response.json(await backroom!.overview(request.query.days)); }
+    catch (error) { next(error); }
+  });
+  app.get("/api/backroom/records", async (request, response, next) => {
+    try { response.json(await backroom!.records(request.query)); }
+    catch (error) { next(error); }
+  });
+  app.post("/api/backroom/logout", async (request, response, next) => {
+    try { await identity.revokeSession(requireSessionBearer(request)); response.status(204).end(); }
+    catch (error) { next(error); }
+  });
   const registrationLimiter = rateLimit({ windowMs: 60 * 60_000, limit: 10, standardHeaders: "draft-8", legacyHeaders: false });
   app.post("/api/auth/register/consumer", registrationLimiter, async (request, response, next) => {
     try {

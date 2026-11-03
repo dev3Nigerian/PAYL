@@ -1959,6 +1959,14 @@ export class PaylService {
     });
   }
 
+  async recordLifecycleHeartbeat(success: boolean): Promise<void> {
+    await this.pool.query(`INSERT INTO operations_heartbeats(name, last_attempt_at, last_success_at, status)
+      VALUES ('lifecycle', now(), CASE WHEN $1 THEN now() ELSE NULL END, CASE WHEN $1 THEN 'ok' ELSE 'failed' END)
+      ON CONFLICT (name) DO UPDATE SET last_attempt_at=now(),
+        last_success_at=CASE WHEN $1 THEN now() ELSE operations_heartbeats.last_success_at END,
+        status=CASE WHEN $1 THEN 'ok' ELSE 'failed' END`, [success]);
+  }
+
   async reconciliationReport(merchantId: string, persist = false): Promise<Record<string, unknown>> {
     const queryable = this.pool;
     const [movement, accounts, journal] = await Promise.all([

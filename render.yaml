@@ -1,5 +1,8 @@
 # Starter compute is $7/month per service ($21/month for these three instances).
 # Render also calls this tier 0.5c-512mb; the starter alias remains supported.
+# Optional owner dashboard: /backroom on the consumer web service (no extra instance).
+# Add PAYL_BACKROOM_EMAIL, PAYL_BACKROOM_PASSWORD, and PAYL_BACKROOM_TOTP_SECRET
+# together in the API service's Environment panel. See docs/deployment/backroom.md.
 previews:
   generation: off
 

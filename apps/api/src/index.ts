@@ -8,6 +8,7 @@ import { IdentityService } from "./identity.js";
 import { PaylOAuthProvider } from "./oauth.js";
 import { PaylService } from "./service.js";
 import { LifecycleWorkers } from "./workers.js";
+import { BackroomService } from "./backroom.js";
 
 const config = loadConfig();
 const logger = pino({ level: config.nodeEnv === "production" ? "info" : "debug" });
@@ -22,10 +23,12 @@ if (config.sandboxBootstrapEnabled) {
   await identity.seedSandboxUsers();
 }
 const oauth = new PaylOAuthProvider(pool, config);
+await identity.seedBackroomOwner();
+const backroom = new BackroomService(pool, config);
 const workers = new LifecycleWorkers(service, config.lifecycleWorkerIntervalMs, logger);
 workers.start();
 
-const server = createServer(createApp(service, identity, oauth, config));
+const server = createServer(createApp(service, identity, oauth, config, backroom));
 server.listen(config.port, () => {
   logger.info(
     {

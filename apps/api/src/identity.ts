@@ -9,7 +9,7 @@ import { postJournal } from "./ledger.js";
 const scryptAsync = promisify(scrypt);
 export const SANDBOX_WELCOME_CREDIT_MINOR = 10_000n;
 
-export type UserRole = "consumer" | "merchant_admin";
+export type UserRole = "consumer" | "merchant_admin" | "platform_admin";
 
 export type AuthSession = {
   sessionId: string;
@@ -33,6 +33,8 @@ type UserRow = {
   password_hash: string;
   mfa_secret: string | null;
   status: string;
+  backroom_config_hash: string | null;
+  mfa_last_step: string | null;
 };
 
 function sha256(value: string): string {
@@ -94,6 +96,38 @@ export class IdentityService {
     private readonly pool: pg.Pool,
     private readonly config: Config,
   ) {}
+
+  private backroomFingerprint(): string | null {
+    return this.config.backroom ? sha256(JSON.stringify(this.config.backroom)) : null;
+  }
+
+  // The single owner is provisioned out of band. Never promote a public signup.
+  async seedBackroomOwner(): Promise<void> {
+    const owner = this.config.backroom;
+    if (!owner) {
+      await this.pool.query("UPDATE auth_sessions SET revoked_at = now() WHERE user_id = 'user_backroom_owner' AND revoked_at IS NULL");
+      return;
+    }
+    await inTransaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('antspace.backroom.owner'))");
+      const collision = await client.query("SELECT id FROM auth_users WHERE email = $1 AND id <> 'user_backroom_owner'", [owner.email]);
+      if (collision.rowCount) throw new Error("Backroom owner must use an email separate from consumer and merchant accounts");
+      const current = (await client.query<UserRow>("SELECT * FROM auth_users WHERE id = 'user_backroom_owner' FOR UPDATE")).rows[0];
+      if (current?.backroom_config_hash === this.backroomFingerprint()) return;
+      const password = await createPasswordRecord(owner.password);
+      await client.query(
+        `INSERT INTO auth_users(id, email, display_name, role, password_salt, password_hash, mfa_secret, backroom_config_hash)
+         VALUES ('user_backroom_owner', $1, 'Antspace owner', 'platform_admin', $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, password_salt = EXCLUDED.password_salt,
+           password_hash = EXCLUDED.password_hash, mfa_secret = EXCLUDED.mfa_secret,
+           backroom_config_hash = EXCLUDED.backroom_config_hash, mfa_last_step = NULL`,
+        [owner.email, password.salt, password.hash, owner.totpSecret, this.backroomFingerprint()],
+      );
+      await client.query("UPDATE auth_sessions SET revoked_at = now() WHERE user_id = 'user_backroom_owner' AND revoked_at IS NULL");
+      await client.query(`INSERT INTO audit_events(correlation_id, actor_type, actor_id, event_type, object_type, object_id)
+        VALUES ($1, 'system', 'backroom_bootstrap', 'backroom.credentials_configured', 'user', 'user_backroom_owner')`, [randomUUID()]);
+    });
+  }
 
   async seedSandboxUsers(): Promise<void> {
     const consumerPassword = await createPasswordRecord(this.config.sandboxConsumerPassword);
@@ -294,7 +328,7 @@ export class IdentityService {
     };
   }
 
-  async login(email: unknown, password: unknown, expectedRole?: UserRole): Promise<{ session: AuthSession; token: string }> {
+  async login(email: unknown, password: unknown, expectedRole?: UserRole, mfaCode?: unknown): Promise<{ session: AuthSession; token: string }> {
     if (typeof email !== "string" || typeof password !== "string") {
       throw new DomainError("INVALID_CREDENTIALS", "Email and password are required", 401);
     }
@@ -312,6 +346,26 @@ export class IdentityService {
       throw new DomainError("INVALID_CREDENTIALS", "Email or password is incorrect", 401);
     }
 
+    if (user.role === "platform_admin") {
+      if (!this.config.backroom || user.backroom_config_hash !== this.backroomFingerprint()) {
+        throw new DomainError("INVALID_CREDENTIALS", "Backroom access is unavailable", 401);
+      }
+      return inTransaction(this.pool, async (client) => {
+        const current = (await client.query<UserRow>("SELECT * FROM auth_users WHERE id = $1 AND status = 'active' FOR UPDATE", [user.id])).rows[0];
+        if (!current?.mfa_secret || current.backroom_config_hash !== this.backroomFingerprint()) throw new DomainError("UNAUTHENTICATED", "Sign in to continue", 401);
+        assertTotpCode(current.mfa_secret, mfaCode);
+        const currentStep = Math.floor(Date.now() / 30_000);
+        const step = [-1, 0, 1].map((offset) => currentStep + offset)
+          .find((value) => totpCode(current.mfa_secret!, value * 30_000) === mfaCode);
+        if (step === undefined) throw new DomainError("MFA_INVALID", "Authenticator code is invalid or expired", 403);
+        if (current.mfa_last_step !== null && step <= Number(current.mfa_last_step)) throw new DomainError("MFA_REPLAYED", "Wait for the next authenticator code, then try again", 403);
+        await client.query("UPDATE auth_users SET mfa_last_step = $2 WHERE id = $1", [user.id, step]);
+        const result = await this.createSession(current, client);
+        await client.query(`INSERT INTO audit_events(correlation_id, actor_type, actor_id, event_type, object_type, object_id)
+          VALUES ($1, 'platform_admin', $2, 'backroom.signed_in', 'user', $2)`, [result.session.sessionId, user.id]);
+        return result;
+      });
+    }
     return this.createSession(user);
   }
 
@@ -347,7 +401,7 @@ export class IdentityService {
       "SELECT * FROM auth_users WHERE id = $1 AND status = 'active'",
       [handoff.user_id],
     )).rows[0];
-    if (!user) throw new DomainError("UNAUTHENTICATED", "Sign in to continue", 401);
+    if (!user || user.role !== "consumer") throw new DomainError("UNAUTHENTICATED", "Sign in to continue", 401);
     return this.createSession(user);
   }
 
@@ -361,6 +415,9 @@ export class IdentityService {
         [sha256(token)],
       )).rows[0];
     if (!row) throw new DomainError("UNAUTHENTICATED", "Sign in to continue", 401);
+    if (row.role === "platform_admin" && (!this.config.backroom || row.backroom_config_hash !== this.backroomFingerprint())) {
+      throw new DomainError("UNAUTHENTICATED", "Backroom access is unavailable", 401);
+    }
     return this.sessionFromUser(row, row.session_id, row.expires_at);
   }
 
@@ -383,7 +440,7 @@ export class IdentityService {
   private async createSession(user: UserRow, queryable: pg.Pool | pg.PoolClient = this.pool): Promise<{ session: AuthSession; token: string }> {
     const token = randomBytes(32).toString("base64url");
     const sessionId = `session_${randomUUID()}`;
-    const expiresAt = new Date(Date.now() + this.config.sessionTtlHours * 60 * 60_000);
+    const expiresAt = new Date(Date.now() + (user.role === "platform_admin" ? 1 : this.config.sessionTtlHours) * 60 * 60_000);
     await queryable.query(
       `INSERT INTO auth_sessions(id, user_id, token_hash, expires_at)
        VALUES ($1, $2, $3, $4)`,

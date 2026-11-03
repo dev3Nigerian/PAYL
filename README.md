@@ -81,6 +81,8 @@ Follow [the Render and Neon deployment runbook](docs/deployment/render-neon.md).
 
 `render.yaml` pins all three services to `main` and waits for passing CI checks before automatic deployments. Existing installations must also switch their Blueprint's linked branch to `main`; follow [the branch cutover steps](docs/deployment/render-neon.md#switch-an-existing-blueprint-to-main) so future infrastructure updates come from the same branch.
 
+The private [Antspace Backroom](https://antspace.online/backroom) provides owner-only monitoring of shoppers, merchants, orders, wallet funding, withdrawals, ledger journals, audit events, and webhook deliveries. It runs inside the existing consumer service. Access requires a separate owner email, password, and authenticator; it stays disabled until configured. Follow [the backroom setup guide](docs/deployment/backroom.md).
+
 Sandbox dashboard accounts:
 
 | Workspace | Email | Password |

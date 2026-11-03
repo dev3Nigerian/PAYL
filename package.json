@@ -18,6 +18,7 @@
     "demo": "pnpm --filter @payl/reference-agent demo",
     "auth:code": "pnpm --filter @payl/api auth:code",
     "deploy:secrets": "node scripts/generate-hosted-secrets.mjs",
+    "backroom:secrets": "node scripts/generate-backroom-secrets.mjs",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm db:test:up && pnpm --filter @payl/api test && pnpm --filter @payl/approval-web test",
     "build": "pnpm -r build"
