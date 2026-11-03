@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "@payl/ui/styles.css";
 import "./workspace.css";
+import "./chat.css";
 
 export const metadata: Metadata = {
   applicationName: "Antspace",

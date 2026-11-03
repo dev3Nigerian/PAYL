@@ -30,4 +30,5 @@ jobs:
       - run: docker compose up -d --wait postgres-test
       - run: pnpm typecheck
       - run: pnpm --filter @payl/api test
+      - run: pnpm --filter @payl/approval-web test
       - run: pnpm build

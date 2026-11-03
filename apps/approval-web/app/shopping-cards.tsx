@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
+import { Icon } from "@payl/ui";
 
 export type ShoppingBrief = {
   query: string; maxBudgetMinor: string | null; refundableOnly: boolean;
@@ -24,9 +25,9 @@ function money(value: string | undefined, currency = "USD") {
 export function ShoppingBriefCard({ brief, disabled, onReset }: { brief: ShoppingBrief | null; disabled: boolean; onReset: () => void }) {
   if (!brief || !(brief.query || brief.maxBudgetMinor || brief.refundableOnly || brief.fulfillmentMethod || brief.preferences.length || brief.confirmBeforePurchase)) return null;
   return <aside className="shopping-brief" aria-label="Saved shopping requirements">
-    <div><strong>Your shopping brief</strong><button type="button" className="text-button" disabled={disabled} onClick={onReset}>Clear brief</button></div>
-    <p>{[brief.query, brief.maxBudgetMinor ? `Budget: ${money(brief.maxBudgetMinor)}` : "", brief.refundableOnly ? "Refundable only" : "", brief.fulfillmentMethod?.replaceAll("_", " "), ...brief.preferences, brief.confirmBeforePurchase ? "Confirm before buying" : ""].filter(Boolean).join(" · ")}</p>
-    <small>Saved for this chat. Tell me what to change.</small>
+    <details><summary><Icon name="settings" size={16} /><strong>Shopping preferences</strong>{brief.maxBudgetMinor && <span>Up to {money(brief.maxBudgetMinor)}</span>}<Icon name="chevron" size={14} /></summary>
+      <p>{[brief.query, brief.refundableOnly ? "Refundable only" : "", brief.fulfillmentMethod?.replaceAll("_", " "), ...brief.preferences, brief.confirmBeforePurchase ? "Confirm before buying" : ""].filter(Boolean).join(" · ")}</p><small>Saved for this chat. Tell me what to change.</small>
+    </details><button type="button" className="text-button" disabled={disabled} onClick={onReset}>Clear</button>
   </aside>;
 }
 

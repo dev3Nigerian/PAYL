@@ -4,19 +4,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@payl/ui";
 import { ShoppingBriefCard, ShoppingDetails, type ShoppingBrief, type ChatDetails } from "./shopping-cards";
-
-type Offer = {
-  offerId: string;
-  merchantId: string;
-  merchantName: string;
-  name: string;
-  description: string;
-  priceMinor: string;
-  currency: string;
-  fulfillmentMethod: "digital_download" | "digital_service";
-  refundable: boolean;
-  refundWindowMinutes: number | null;
-};
+import ChatMessageView from "./chat-message";
+import ChatOfferCard, { type Offer } from "./chat-offer-card";
 
 type ChatMessage = {
   id: string;
@@ -135,14 +124,6 @@ async function streamChat(body: unknown, onProgress: (step: string) => void): Pr
   throw new Error("Chat connection was interrupted. Send the same message to recover the result.");
 }
 
-function OfferCard({ offer, onReview, disabled }: { offer: Offer; onReview: (offer: Offer) => void; disabled: boolean }) {
-  return <article className="chat-offer-card">
-    <div className="chat-offer-source"><span>Catalog snapshot</span><span>{offer.merchantName}</span></div>
-    <div className="chat-offer-heading"><div><h3>{offer.name}</h3><p>{offer.description}</p></div><strong>{money(offer.priceMinor, offer.currency)}</strong></div>
-    <div className="chat-offer-footer"><span>{offer.fulfillmentMethod === "digital_download" ? "Digital download" : "Digital service"} · {refundTerms(offer.refundable, offer.refundWindowMinutes)}</span><button type="button" className="secondary-button" disabled={disabled} onClick={() => onReview(offer)}>Review checkout</button></div>
-  </article>;
-}
-
 function PurchaseActionCard({ action, disabled, onConfirm, onResume, onFunding, onFreshQuote }: {
   action: ChatPurchaseAction;
   disabled: boolean;
@@ -173,6 +154,11 @@ const suggestions: Array<{ title: string; description: string; prompt: string; i
 export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consumerRef: string; offline: boolean; onAddFunds: () => void }) {
   const router = useRouter();
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const latestMessageRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const followLatestRef = useRef(true);
+  const lastMessageId = useRef<string | null>(null);
+  const [showLatest, setShowLatest] = useState(false);
   const conversationKey = `payl-chat:${consumerRef}`;
   const chatSendKey = `payl-chat-send:${consumerRef}`;
   const pendingKey = `payl-checkout:${consumerRef}`;
@@ -239,13 +225,49 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
 
   useEffect(() => {
     const transcript = transcriptRef.current;
-    if (transcript) transcript.scrollTop = messages.length > 0 || busy ? transcript.scrollHeight : 0;
-  }, [messages.length, busy, progress]);
+    if (!transcript) return;
+    const latest = messages.at(-1);
+    const isNewReply = latest?.role === "assistant" && latest.id !== lastMessageId.current;
+    lastMessageId.current = latest?.id ?? null;
+    if (followLatestRef.current) {
+      // Start long replies at their first line instead of jumping past the answer.
+      transcript.scrollTop = isNewReply && latestMessageRef.current
+        ? Math.max(0, latestMessageRef.current.offsetTop - 24)
+        : messages.length || busy ? transcript.scrollHeight : 0;
+    }
+    const away = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > 100;
+    followLatestRef.current = !away;
+    setShowLatest(away);
+  }, [messages, busy, progress, loadingHistory]);
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "auto";
+    composer.style.height = `${Math.min(composer.scrollHeight, 160)}px`;
+  }, [draft]);
+
+  function trackTranscriptScroll() {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    const away = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight > 100;
+    followLatestRef.current = !away;
+    setShowLatest(away);
+  }
+
+  function jumpToLatest() {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    followLatestRef.current = true;
+    transcript.scrollTop = transcript.scrollHeight;
+    setShowLatest(false);
+  }
 
   async function sendMessage(event?: FormEvent<HTMLFormElement>, prompt?: string, options: SendOptions = {}) {
     event?.preventDefault();
     const message = (prompt ?? draft).trim();
     if (!message || busy || offline || loadingHistory) return;
+    followLatestRef.current = true;
     const pendingSend = (() => {
       try { return JSON.parse(window.sessionStorage.getItem(chatSendKey) ?? "null") as { message?: string; options?: SendOptions; requestId?: string } | null; }
       catch { return null; }
@@ -400,6 +422,10 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
     setDraft("");
     setError(null);
     setNeedsFunding(null);
+    followLatestRef.current = true;
+    lastMessageId.current = null;
+    setShowLatest(false);
+    composerRef.current?.focus();
     window.sessionStorage.removeItem(fundingKey);
   }
 
@@ -429,25 +455,26 @@ export default function ShopWithAi({ consumerRef, offline, onAddFunds }: { consu
 
   return <section className={`shop-layout${showManualCheckout ? "" : " chat-only"}`} aria-label="Shop with AI">
     <div className="dashboard-panel shop-chat-panel">
-      <div className="shop-panel-header"><div className="chat-identity"><span><Icon name="sparkles" size={18} /></span><div><h2>Antspace AI</h2><p>Your shopping companion</p></div></div><button className="secondary-button" type="button" disabled={!!busy} onClick={newConversation}><Icon name="plus" size={15} /> New chat</button></div>
-      <p className="shop-intro"><Icon name="shield" size={14} /> Your spending rules apply to every purchase.</p>
+      <div className="shop-panel-header"><div className="chat-identity"><span><Icon name="sparkles" size={20} /></span><div><h2>Antspace AI</h2><p>Your personal shopping companion</p></div></div><div className="chat-header-actions"><a className="chat-downloads-link" href="#downloads"><Icon name="download" size={17} /><span>My downloads</span></a><button className="secondary-button" type="button" disabled={!!busy || loadingHistory} onClick={newConversation}><Icon name="plus" size={16} /> New chat</button></div></div>
+      <p className="shop-intro"><Icon name="shield" size={14} /> Your budget. Your rules. Every purchase.</p>
       <ShoppingBriefCard brief={brief} disabled={!!busy || offline} onReset={() => void sendMessage(undefined, "Clear shopping brief")} />
-      <div className="shop-transcript" role="log" aria-live="polite" aria-label="Conversation" ref={transcriptRef}>
-        {loadingHistory ? <p className="empty-state" role="status">Loading your conversation…</p> : messages.length === 0 ? <div className="shop-empty"><span className="shop-spark"><Icon name="sparkles" size={30} /></span><span className="overline">A little inspiration goes a long way</span><h3>What’s on your mind?</h3><p>A tool for your next project? A service to get you unstuck? Tell me what you need, and we’ll find your fit.</p><div className="shop-suggestions">{suggestions.map((suggestion) => <button key={suggestion.title} type="button" disabled={!!busy || offline} onClick={() => void sendMessage(undefined, suggestion.prompt)}><Icon name={suggestion.icon} size={19} /><strong>{suggestion.title}</strong><span>{suggestion.description}</span><Icon name="arrow" size={14} /></button>)}</div></div> : messages.map((message) => <div key={message.id} className={`shop-message ${message.role}`}>
-          <div className="shop-message-label">{message.role === "user" ? "You" : "Antspace AI"}<time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</time></div>
-          <p>{message.content}</p>
+      <div className="chat-transcript-wrap">
+      <div className="shop-transcript" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Conversation" ref={transcriptRef} onScroll={trackTranscriptScroll}>
+        {loadingHistory ? <div className="chat-history-loading" role="status"><Icon name="sparkles" size={24} /><strong>Opening your conversation…</strong><span>Picking up where you left off.</span></div> : messages.length === 0 ? <div className="shop-empty"><span className="shop-spark"><Icon name="sparkles" size={30} /></span><span className="overline">A little inspiration goes a long way</span><h3>What’s on your mind?</h3><p>A tool for your next project? A service to get you unstuck? Tell me what you need, and we’ll find your fit.</p><div className="shop-suggestions">{suggestions.map((suggestion) => <button key={suggestion.title} type="button" disabled={!!busy || offline} onClick={() => void sendMessage(undefined, suggestion.prompt)}><Icon name={suggestion.icon} size={19} /><strong>{suggestion.title}</strong><span>{suggestion.description}</span><Icon name="arrow" size={14} /></button>)}</div></div> : messages.map((message, index) => <ChatMessageView key={message.id} role={message.role} content={message.content} createdAt={message.createdAt} ref={index === messages.length - 1 ? latestMessageRef : undefined}>
           {message.role === "assistant" && message.action && actionCard(message.action)}
           {message.role === "assistant" && <ShoppingDetails details={message.details} disabled={!!busy || offline} onMessage={(prompt) => void sendMessage(undefined, prompt)} onDetails={submitServiceDetails} />}
-          {message.role === "assistant" && !message.action && message.offers?.length > 0 && <div className="chat-offer-list"><strong className="chat-offer-list-heading">Retrieved offers at {new Date(message.createdAt).toLocaleString("en-US")}</strong>{message.offers.map((offer) => <OfferCard key={`${message.id}:${offer.merchantId}:${offer.offerId}`} offer={offer} onReview={(selected) => void reviewOffer(selected)} disabled={!!busy || offline || !!pending} />)}</div>}
-        </div>)}
-        {busy === "chat" && <div className="shop-message assistant"><div className="shop-message-label">Antspace AI</div><ol className="chat-progress" aria-label="Current activity">{progress.map((step, index) => <li key={`${index}:${step}`} className={index === progress.length - 1 ? "active" : "done"}>{step}</li>)}</ol></div>}
+          {message.role === "assistant" && !message.action && message.offers?.length > 0 && <section className="chat-offer-list" aria-label="Offers from this search"><div className="chat-offer-list-heading"><strong>{message.offers.length} {message.offers.length === 1 ? "offer" : "offers"} to explore</strong><span>Checked <time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time></span></div><div className="chat-offers-grid">{message.offers.map((offer) => <ChatOfferCard key={`${message.id}:${offer.merchantId}:${offer.offerId}`} offer={offer} onReview={(selected) => void reviewOffer(selected)} disabled={!!busy || offline || !!pending} />)}</div></section>}
+        </ChatMessageView>)}
+        {busy === "chat" && <div className="chat-working"><span className="chat-message-avatar" aria-hidden="true"><Icon name="sparkles" size={17} /></span><div><div className="chat-working-current"><span className="chat-working-dots" aria-hidden="true"><i /><i /><i /></span><span>{progress.at(-1) ?? "Working on your request…"}</span></div>{progress.length > 1 && <details className="chat-work-details"><summary>View steps</summary><ol className="chat-progress" aria-label="Current activity">{progress.map((step, index) => <li key={`${index}:${step}`} className={index === progress.length - 1 ? "active" : "done"}>{step}</li>)}</ol></details>}</div></div>}
+      </div>
+      {showLatest && <button className="chat-jump-latest" type="button" onClick={jumpToLatest}><Icon name="down" size={15} />Jump to latest</button>}
       </div>
       {offline && <p className="form-notice error" role="alert">The Antspace API is unavailable. Chat will be ready when the wallet reconnects.</p>}
       {error && <p className="form-notice error" role="alert">{error}</p>}
       <form className="shop-composer" onSubmit={(event) => void sendMessage(event)}>
         <label htmlFor="shop-prompt">Message Antspace AI</label>
-        <textarea id="shop-prompt" rows={2} maxLength={2000} placeholder="Tell me what you’re looking for…" value={draft} disabled={offline || loadingHistory || !!busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
-        <div><span>Enter to send · Shift+Enter for a new line</span><button className="primary-button" type="submit" disabled={offline || loadingHistory || !!busy || !draft.trim()}>{busy === "chat" ? "Working…" : "Send message"}<Icon name="send" size={16} /></button></div>
+        <div className="chat-composer-field"><textarea id="shop-prompt" ref={composerRef} rows={2} maxLength={2000} placeholder="Describe what you need, or ask about an order…" value={draft} disabled={offline || loadingHistory || !!busy} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><button className="primary-button chat-send-button" type="submit" disabled={offline || loadingHistory || !!busy || !draft.trim()} aria-label={busy === "chat" ? "Message is being sent" : "Send message"}><Icon name="send" size={18} /><span>{busy === "chat" ? "Working…" : "Send"}</span></button></div>
+        <div className="chat-composer-hints"><span>Enter to send <b>·</b> Shift+Enter for a new line</span>{draft.length > 1600 ? <span className="chat-character-count">{draft.length}/2000</span> : <span>Your spending limits always apply.</span>}</div>
       </form>
     </div>
 

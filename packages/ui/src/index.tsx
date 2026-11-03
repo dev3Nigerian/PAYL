@@ -17,6 +17,8 @@ const paths = {
   search: "M16 16l5 5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z",
   send: "m21 3-6 18-4-8-8-4 18-6Zm0 0L11 13",
   chevron: "m9 5 7 7-7 7",
+  copy: "M9 9h12v12H9V9ZM5 15H3V3h12v2",
+  down: "M12 4v16m-6-6 6 6 6-6",
   settings: "M4 7h16M4 17h16M8 4v6m8 4v6",
 } as const;
 
