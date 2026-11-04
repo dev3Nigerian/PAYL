@@ -33,12 +33,16 @@ describe("private backroom browser transport", () => {
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
     expect((await login(post("login", input, "https://unrelated.test"))).status).toBe(403);
     expect((await logout(post("logout", {}, "https://unrelated.test"))).status).toBe(403);
-    for (const body of [null, [], { ...input, mfaCode: "123" }]) expect((await login(post("login", body))).status).toBe(400);
+    for (const body of [null, [], ...[undefined, null, "", 123456, "123", "abcdef"].map((mfaCode) => ({ ...input, mfaCode }))]) {
+      const rejected = await login(post("login", body));
+      expect(rejected.status).toBe(400);
+      expect(rejected.headers.get("set-cookie")).toBeNull();
+    }
     expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("never retries an ambiguous MFA login or accepts a wrong-role session", async () => {
-    for (const upstream of [new Response("Starting…", { status: 503 }), Response.json({ role: "consumer", sessionToken: "consumer-token" }), new Response("Too many attempts", { status: 429 })]) {
+    for (const upstream of [new Response("Starting…", { status: 503 }), Response.json({ error: { code: "MFA_INVALID", message: "Authenticator code is invalid or expired" } }, { status: 403 }), Response.json({ role: "consumer", sessionToken: "consumer-token" }), new Response("Too many attempts", { status: 429 })]) {
       const fetcher = vi.fn().mockResolvedValue(upstream); vi.stubGlobal("fetch", fetcher);
       const response = await login(post());
       expect(response.status).toBeGreaterThanOrEqual(400);

@@ -48,6 +48,41 @@ describe("owner authentication", () => {
     expect(registered.body.role).toBe("consumer");
     await request(app).get("/api/backroom/overview").set("authorization", `Bearer ${registered.body.sessionToken}`).expect(403);
     await request(app).post("/api/auth/login").send({ email: owner.email, password: owner.password, role: "platform_admin" }).expect(400);
+    for (const role of ["consumer", "merchant_admin"]) {
+      await request(app).post("/api/auth/login").send({ email: owner.email, password: owner.password, role }).expect(401);
+    }
+  });
+
+  it("enforces the actual authenticator value on direct HTTP login before creating any session", async () => {
+    const validCodes = new Set([-1, 0, 1].map((step) => totpCode(owner.totpSecret, Date.now() + step * 30_000)));
+    const wrongCode = ["000000", "111111", "222222", "333333"].find((code) => !validCodes.has(code))!;
+    const expiredCode = Array.from({ length: 10 }, (_, step) => totpCode(owner.totpSecret, Date.now() - (10 + step) * 30_000))
+      .find((code) => !validCodes.has(code));
+    expect(expiredCode).toBeDefined();
+    for (const [mfaCode, code] of [
+      [undefined, "MFA_REQUIRED"], [null, "MFA_REQUIRED"], ["", "MFA_REQUIRED"],
+      [123456, "MFA_REQUIRED"], ["12345", "MFA_REQUIRED"], ["abcdef", "MFA_REQUIRED"],
+      [wrongCode, "MFA_INVALID"], [expiredCode, "MFA_INVALID"],
+    ] as const) {
+      // Supplying a public role must not bypass the fixed owner role on this route.
+      const rejected = await request(app).post("/api/backroom/login")
+        .send({ email: owner.email, password: owner.password, role: "consumer", mfaCode }).expect(403);
+      expect(rejected.body.error.code).toBe(code);
+      expect(rejected.body).not.toHaveProperty("sessionToken");
+      expect(rejected.headers["set-cookie"]).toBeUndefined();
+    }
+    expect((await pool.query("SELECT count(*)::int AS count FROM auth_sessions WHERE user_id='user_backroom_owner'")).rows[0].count).toBe(0);
+
+    const validCode = totpCode(owner.totpSecret);
+    const accepted = await request(app).post("/api/backroom/login")
+      .send({ email: owner.email, password: owner.password, mfaCode: validCode }).expect(200);
+    expect(accepted.body).toMatchObject({ role: "platform_admin", sessionToken: expect.any(String) });
+    await request(app).get("/api/backroom/overview").set("authorization", `Bearer ${accepted.body.sessionToken}`).expect(200);
+    const replay = await request(app).post("/api/backroom/login")
+      .send({ email: owner.email, password: owner.password, mfaCode: validCode }).expect(403);
+    expect(replay.body.error.code).toBe("MFA_REPLAYED");
+    expect(replay.body).not.toHaveProperty("sessionToken");
+    expect((await pool.query("SELECT count(*)::int AS count FROM auth_sessions WHERE user_id='user_backroom_owner'")).rows[0].count).toBe(1);
   });
 
   it("requires password and MFA, prevents simultaneous TOTP reuse, and uses one-hour sessions", async () => {
